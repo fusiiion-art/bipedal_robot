@@ -1,0 +1,250 @@
+<mujoco model="senpuu_maru_humanoid">
+    <compiler angle="radian" meshdir="../all/meshes"  inertiafromgeom="true"/>
+    <option timestep="0.002" integrator="Euler" solver="Newton" gravity="0 0 -9.81"/>
+    
+    <default>
+        <!-- 全関節の粘性抵抗・クーロン摩擦・電機子的慣性を設定し、実機モータの応答を近似 -->
+        <joint limited="true" damping="0.5" frictionloss="0.05" armature="0.01" />
+        <!-- 衝突用geomのデフォルト：床面や足裏に適切な摩擦を設定 -->
+        <geom contype="1" conaffinity="1" condim="3" friction="1.5 0.005 0.0001" />
+    </default>
+
+    <asset>
+        <!-- 実際に meshes フォルダに存在する 21個のSTLファイルのみを定義 -->
+        <mesh name="doutai-v5_doutai" file="doutai-v5_doutai.stl" scale="0.001 0.001 0.001" />
+        <mesh name="doutai-v5_hidarikata_hidarikata-1" file="doutai-v5_hidarikata_hidarikata-1.stl" scale="0.001 0.001 0.001" />
+        <mesh name="doutai-v5_hidarikata_hidarijouwan_hidarijouwan-1" file="doutai-v5_hidarikata_hidarijouwan_hidarijouwan-1.stl" scale="0.001 0.001 0.001" />
+        <mesh name="doutai-v5_hidarikata_hidarijouwan_hidarihiji_hidarihiji-1" file="doutai-v5_hidarikata_hidarijouwan_hidarihiji_hidarihiji-1.stl" scale="0.001 0.001 0.001" />
+        <mesh name="doutai-v5_hidarikata_hidarijouwan_hidarihiji_hidarite_hidarite-1" file="doutai-v5_hidarikata_hidarijouwan_hidarihiji_hidarite_hidarite-1.stl" scale="0.001 0.001 0.001" />
+        <mesh name="doutai-v5_hidaridairou_hidaridairou-1" file="doutai-v5_hidaridairou_hidaridairou-1.stl" scale="0.001 0.001 0.001" />
+        <mesh name="doutai-v5_hidaridairou_hidarikokansetu_hidarikokansetu-1" file="doutai-v5_hidaridairou_hidarikokansetu_hidarikokansetu-1.stl" scale="0.001 0.001 0.001" />
+        <mesh name="doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarimomo-1" file="doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarimomo-1.stl" scale="0.001 0.001 0.001" />
+        <mesh name="doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidarihizabu-1" file="doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidarihizabu-1.stl" scale="0.001 0.001 0.001" />
+        <mesh name="doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidariaikabu_hidarihizabu-2" file="doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidariaikabu_hidarihizabu-2.stl" scale="0.001 0.001 0.001" />
+        <mesh name="doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidariaikabu_hidariashiura_hidariashiura-1" file="doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidariaikabu_hidariashiura_hidariashiura-1.stl" scale="0.001 0.001 0.001" />
+        <mesh name="doutai-v5_migikata_migikata-1" file="doutai-v5_migikata_migikata-1.stl" scale="0.001 0.001 0.001" />
+        <mesh name="doutai-v5_migikata_migijouwan_migijouwan-1" file="doutai-v5_migikata_migijouwan_migijouwan-1.stl" scale="0.001 0.001 0.001" />
+        <mesh name="doutai-v5_migikata_migijouwan_migihiji_migihiji-1" file="doutai-v5_migikata_migijouwan_migihiji_migihiji-1.stl" scale="0.001 0.001 0.001" />
+        <mesh name="doutai-v5_migikata_migijouwan_migihiji_migite_migite-1" file="doutai-v5_migikata_migijouwan_migihiji_migite_migite-1.stl" scale="0.001 0.001 0.001" />
+        <mesh name="doutai-v5_migidaitou_migidaitou-1" file="doutai-v5_migidaitou_migidaitou-1.stl" scale="0.001 0.001 0.001" />
+        <mesh name="doutai-v5_migidaitou_migikokansetu_migikokansetu-1" file="doutai-v5_migidaitou_migikokansetu_migikokansetu-1.stl" scale="0.001 0.001 0.001" />
+        <mesh name="doutai-v5_migidaitou_migikokansetu_migimomo_migimomo-1" file="doutai-v5_migidaitou_migikokansetu_migimomo_migimomo-1.stl" scale="0.001 0.001 0.001" />
+        <mesh name="doutai-v5_migidaitou_migikokansetu_migimomo_migihizabu_migihizabu-1" file="doutai-v5_migidaitou_migikokansetu_migimomo_migihizabu_migihizabu-1.stl" scale="0.001 0.001 0.001" />
+        <mesh name="doutai-v5_migidaitou_migikokansetu_migimomo_migihizabu_migigaikabu_migigaikabu-1" file="doutai-v5_migidaitou_migikokansetu_migimomo_migihizabu_migigaikabu_migigaikabu-1.stl" scale="0.001 0.001 0.001" />
+        <mesh name="doutai-v5_migidaitou_migikokansetu_migimomo_migihizabu_migigaikabu_migiashiura_migiashiura-1" file="doutai-v5_migidaitou_migikokansetu_migimomo_migihizabu_migigaikabu_migiashiura_migiashiura-1.stl" scale="0.001 0.001 0.001" />
+    </asset>
+
+    <worldbody>
+        <!-- 光源と床面 -->
+        <light directional="true" pos="-0.5 0.5 3" dir="0 0 -1" />
+        <geom pos="0 0 0" size="10 10 0.1" type="plane" friction="1.5 0.005 0.0001" rgba="0.9 0.9 0.9 1" />
+
+        <!-- 胴体 (torso): 美しい元のメッシュのみを表示・衝突判定に使用 -->
+        <body name="doutai-v5_doutai" pos="0.00023393134703528052 -7.6423536853851e-05 0.45" euler="0 0 0">
+            <!-- 致命的な問題の修正: ルートリンクへの freejoint の追加 -->
+            <freejoint name="root"/>
+            
+            <!-- 美しいメッシュ本来の見た目（ダサい衝突カプセルを排除、直接衝突判定に使用） -->
+            <geom name="doutai-v5_doutai_geom" type="mesh" mesh="doutai-v5_doutai" rgba="0.2 0.6 1.0 1" contype="0" conaffinity="0" group="1"/>
+            <geom name="doutai-v5_doutai_collision" type="box" pos="0.0000 0.0185 0.0565" size="0.0461 0.0430 0.0605" mass="0.6915" rgba="1.0 0.2 0.2 0.3"/>
+            
+            <!-- IMUセンサー配置 -->
+            <site name="imu_bno055_site" pos="0.000 0.024 0.030" size="0.01" rgba="1 0 0 1" euler="-90 0 0"/>
+            
+            <!-- 胴体慣性データ (CAD由来) -->
+
+            <!-- ================= LEFT ARM (左腕: 4関節) ================= -->
+            <body name="doutai-v5_hidarikata_hidarikata-1" pos="0.0006999999999986792 3.10002749268046e-05 3.8962940074327436e-08" euler="1.1154986237890977e-30 4.716012444300937e-15 -5.967448757363711e-16">
+                <!-- ジョイント名を完全に英語化（RobotConfigと100%同期） -->
+                <joint name="left_shoulder_roll" type="hinge" axis="1.0000000000000009 5.967448757363717e-16 4.743768019916521e-15" pos="0.04490006865296557 4.232619271213933e-07 0.10524996275069255" range="-3.141593 3.141593" />
+                <geom name="doutai-v5_hidarikata_hidarikata-1_geom" type="mesh" mesh="doutai-v5_hidarikata_hidarikata-1" rgba="0.8 0.8 0.8 1" contype="0" conaffinity="0" group="1"/>
+            <geom name="doutai-v5_hidarikata_hidarikata-1_collision" type="sphere" pos="0.0449 0.0000 0.1052" size="0.015" mass="0.008" rgba="0.2 0.2 1.0 0.3"/>
+
+                <body name="doutai-v5_hidarikata_hidarijouwan_hidarijouwan-1" pos="0.0012999999999975121 -1.417008871351655e-16 -3.8962938546660555e-08" euler="3.8857805861868567e-16 1.1102230246328817e-16 6.661338147756639e-16">
+                    <joint name="left_shoulder_pitch" type="hinge" axis="6.938893903927919e-17 0.9999999999999885 -3.60822483003053e-16" pos="0.06590006865296809 -0.017349576738072508 0.10525000171363103" range="-3.141593 0.0" />
+                    <geom name="doutai-v5_hidarikata_hidarijouwan_hidarijouwan-1_geom" type="mesh" mesh="doutai-v5_hidarikata_hidarijouwan_hidarijouwan-1" rgba="0.8 0.8 0.8 1" contype="0" conaffinity="0" group="1"/>
+            <geom name="doutai-v5_hidarikata_hidarijouwan_hidarijouwan-1_collision" type="capsule" fromto="0.0659 -0.0173 0.1053 0.0659 0.0205 0.0360" size="0.015" mass="0.102" rgba="0.2 0.2 1.0 0.3"/>
+
+                    <body name="doutai-v5_hidarikata_hidarijouwan_hidarihiji_hidarihiji-1" pos="0.13060000000000024 0.01550000000000053 0.001000000000000476" euler="1.7763568393998726e-15 -5.551115123128091e-16 3.141592653589793">
+                        <joint name="left_elbow" type="hinge" axis="-4.244167658835587e-15 1.4571677198223065e-15 -0.9999999999999889" pos="0.06469993134703204 -0.005000423261926825 0.03500000171363142" range="-3.141593 0.0" />
+                        <geom name="doutai-v5_hidarikata_hidarijouwan_hidarihiji_hidarihiji-1_geom" type="mesh" mesh="doutai-v5_hidarikata_hidarijouwan_hidarihiji_hidarihiji-1" rgba="0.8 0.8 0.8 1" contype="0" conaffinity="0" group="1"/>
+            <geom name="doutai-v5_hidarikata_hidarijouwan_hidarihiji_hidarihiji-1_collision" type="capsule" fromto="0.0647 -0.0050 0.0350 0.0473 0.0205 0.0207" size="0.012" mass="0.047" rgba="0.2 0.2 1.0 0.3"/>
+
+                        <body name="doutai-v5_hidarikata_hidarijouwan_hidarihiji_hidarite_hidarite-1" pos="0.12990000000000063 0.015500000000002002 -2.842170943040401e-16" euler="6.522560269662253e-16 -1.471045507410035e-15 -3.141592653589768">
+                            <joint name="left_wrist_pitch" type="hinge" axis="1.0000000000000009 -2.5326962746783682e-14 5.7707243174770036e-15" pos="0.08255006865296874 -0.004999576738073327 0.020700001713632003" range="-0.261799 1.570796" />
+                            <geom name="doutai-v5_hidarikata_hidarijouwan_hidarihiji_hidarite_hidarite-1_geom" type="mesh" mesh="doutai-v5_hidarikata_hidarijouwan_hidarihiji_hidarite_hidarite-1" rgba="0.8 0.8 0.8 1" contype="0" conaffinity="0" group="1"/>
+            <geom name="doutai-v5_hidarikata_hidarijouwan_hidarihiji_hidarite_hidarite-1_collision" type="sphere" pos="0.0826 -0.0050 0.0207" size="0.015" mass="0.016" rgba="0.2 0.2 1.0 0.3"/>
+                        </body>
+                    </body>
+                </body >
+            </body >
+
+            <!-- ================= RIGHT ARM (右腕: 4関節) ================= -->
+            <body name="doutai-v5_migikata_migikata-1" pos="-0.0006999999999999429 -8.586881206085195e-18 7.105427357601002e-17" euler="-7.42022288973515e-30 -6.327029270402596e-16 5.892230339558182e-30">
+                <joint name="right_shoulder_roll" type="hinge" axis="-1.0 5.83857757690546e-30 6.049473514246301e-16" pos="-0.04490006865296557 4.232619271213933e-07 0.10524996275069255" range="-3.141593 3.141593" />
+                <geom name="doutai-v5_migikata_migikata-1_geom" type="mesh" mesh="doutai-v5_migikata_migikata-1" rgba="0.8 0.8 0.8 1" contype="0" conaffinity="0" group="1"/>
+            <geom name="doutai-v5_migikata_migikata-1_collision" type="sphere" pos="-0.0449 0.0000 0.1052" size="0.015" mass="0.008" rgba="0.2 0.2 1.0 0.3"/>
+
+                <body name="doutai-v5_migikata_migijouwan_migijouwan-1" pos="-0.0012999999999993301 1.0744009848462355e-16 -4.263256414560601e-16" euler="-1.8041124150158752e-16 1.7473592938244845e-16 -6.661338147755254e-16">
+                    <joint name="right_shoulder_pitch" type="hinge" axis="-6.66133814775512e-16 0.9999999999999991 2.0816681711722375e-16" pos="-0.06589993134703594 -0.017349576463146284 0.10525000171363373" range="0.0 3.141593" />
+                    <geom name="doutai-v5_migikata_migijouwan_migijouwan-1_geom" type="mesh" mesh="doutai-v5_migikata_migijouwan_migijouwan-1" rgba="0.8 0.8 0.8 1" contype="0" conaffinity="0" group="1"/>
+            <geom name="doutai-v5_migikata_migijouwan_migijouwan-1_collision" type="capsule" fromto="-0.0659 -0.0173 0.1053 -0.0659 0.0205 0.0360" size="0.015" mass="0.102" rgba="0.2 0.2 1.0 0.3"/>
+
+                    <body name="doutai-v5_migikata_migijouwan_migihiji_migihiji-1" pos="-0.13130000000000216 0.015500000000000016 0.0010000000000012577" euler="9.298117831235686e-16 1.3182634835638936e-14 3.141592653589793">
+                        <joint name="right_elbow" type="hinge" axis="-1.269691226236544e-14 7.771561172376098e-16 -0.9999999999999987" pos="-0.06540006865296563 -0.005000423536853729 0.0350000017136333" range="0.0 3.141593" />
+                        <geom name="doutai-v5_migikata_migijouwan_migihiji_migihiji-1_geom" type="mesh" mesh="doutai-v5_migikata_migijouwan_migihiji_migihiji-1" rgba="0.8 0.8 0.8 1" contype="0" conaffinity="0" group="1"/>
+            <geom name="doutai-v5_migikata_migijouwan_migihiji_migihiji-1_collision" type="capsule" fromto="-0.0654 -0.0050 0.0350 -0.0481 0.0205 0.0207" size="0.012" mass="0.047" rgba="0.2 0.2 1.0 0.3"/>
+
+                        <body name="doutai-v5_migikata_migijouwan_migihiji_migite_migite-1" pos="-0.1306000000000015 0.0154999999999998 -1.1013412404281553e-15" euler="-5.551115123125789e-17 1.1657341758537046e-15 -3.141592653589793">
+                            <joint name="right_wrist_pitch" type="hinge" axis="-1.0 -6.66133814775564e-16 -1.1586689237743048e-14" pos="-0.08254993134703542 -0.0049995764631464955 0.020700001713634317" range="-1.570796 0.261799" />
+                            <geom name="doutai-v5_migikata_migijouwan_migihiji_migite_migite-1_geom" type="mesh" mesh="doutai-v5_migikata_migijouwan_migihiji_migite_migite-1" rgba="0.8 0.8 0.8 1" contype="0" conaffinity="0" group="1"/>
+            <geom name="doutai-v5_migikata_migijouwan_migihiji_migite_migite-1_collision" type="sphere" pos="-0.0825 -0.0050 0.0207" size="0.015" mass="0.016" rgba="0.2 0.2 1.0 0.3"/>
+                        </body>
+                    </body>
+                </body >
+            </body >
+
+            <!-- ================= LEFT LEG (左脚: 6関節) ================= -->
+            <body name="doutai-v5_hidaridairou_hidaridairou-1" pos="0.02997599999999953 -0.004774999999999421 -0.023599999999997383" euler="-3.1415926535897927 1.848892746611747e-32 -1.4165564612606945e-31">
+                <joint name="left_hip_yaw" type="hinge" axis="-2.775557561563049e-17 6.800116025829044e-16 0.9999999999999998" pos="6.865296518776542e-08 -4.235368532721702e-07 -1.7136308205764937e-09" range="-3.141593 0.0" />
+                <geom name="doutai-v5_hidaridairou_hidaridairou-1_geom" type="mesh" mesh="doutai-v5_hidaridairou_hidaridairou-1" rgba="0.8 0.8 0.8 1" contype="0" conaffinity="0" group="1"/>
+            <geom name="doutai-v5_hidaridairou_hidaridairou-1_collision" type="sphere" pos="0.0000 0.0000 0.0000" size="0.015" mass="0.008" rgba="0.2 1.0 0.2 0.3"/>
+
+                <body name="doutai-v5_hidaridairou_hidarikokansetu_hidarikokansetu-1" pos="0.0137499999999992 -0.014799999999997133 -0.005249999999999524" euler="-1.3877787807822755e-17 5.551115123125865e-17 3.4694469519535767e-16">
+                    <joint name="left_hip_roll" type="hinge" axis="-3.4694469519535846e-16 -0.9999999999999998 5.689893001203827e-16" pos="-0.01374993134703478 -0.014475423536856139 0.007249998286368712" range="-0.523599 0.523599" />
+                    <geom name="doutai-v5_hidaridairou_hidarikokansetu_hidarikokansetu-1_geom" type="mesh" mesh="doutai-v5_hidaridairou_hidarikokansetu_hidarikokansetu-1" rgba="0.8 0.8 0.8 1" contype="0" conaffinity="0" group="1"/>
+            <geom name="doutai-v5_hidaridairou_hidarikokansetu_hidarikokansetu-1_collision" type="sphere" pos="-0.0137 -0.0145 0.0072" size="0.02" mass="0.095" rgba="0.2 1.0 0.2 0.3"/>
+
+                    <body name="doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarimomo-1" pos="0.011199999999993855 -0.004150000000001123 0.08829182389825153" euler="3.141592653589793 1.60892472657932e-15 -3.1415926535897913">
+                        <joint name="left_hip_pitch" type="hinge" axis="-0.9999999999999999 1.706967900361184e-15 1.5811691509636963e-15" pos="0.007599931347028823 0.006374576463144964 0.08104182561188267" range="-1.047198 0.523599" />
+                        <geom name="doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarimomo-1_geom" type="mesh" mesh="doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarimomo-1" rgba="0.8 0.8 0.8 1" contype="0" conaffinity="0" group="1"/>
+            <geom name="doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarimomo-1_collision" type="capsule" fromto="0.0076 0.0064 0.0810 0.0076 0.0064 0.0123" size="0.02" mass="0.064" rgba="0.2 1.0 0.2 0.3"/>
+
+                        <body name="doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidarihizabu-1" pos="0.0386999999999989 0.006375000000000553 -0.04425817610175027" euler="-6.949735925627438e-17 4.107825191113081e-15 -1.5707963267948992">
+                            <joint name="left_knee" type="hinge" axis="7.966552938111054e-16 -1.0 -2.52665604014938e-15" pos="4.235368556485542e-07 -0.031100068652970433 0.05660000171363287" range="-0.523599 1.047198" />
+                            <geom name="doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidarihizabu-1_geom" type="mesh" mesh="doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidarihizabu-1" rgba="0.8 0.8 0.8 1" contype="0" conaffinity="0" group="1"/>
+            <geom name="doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidarihizabu-1_collision" type="sphere" pos="0.0000 -0.0311 0.0566" size="0.015" mass="0.016" rgba="0.2 1.0 0.2 0.3"/>
+
+                            <body name="doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidariaikabu_hidarihizabu-2" pos="0.0022250000000001 -0.027500000000000684 -0.019350000000000374" euler="-2.3665827156630393e-30 1.1484953613139479e-15 1.5707963267949303">
+                                <joint name="left_ankle_pitch" type="hinge" axis="1.0000000000000024 -3.2856980140138993e-14 2.5266560401493856e-15" pos="-0.0036000686529695245 0.0022245764631446388 0.0072500017136331914" range="-0.436332 1.570796" />
+                                <geom name="doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidariaikabu_hidarihizabu-2_geom" type="mesh" mesh="doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidariaikabu_hidarihizabu-2" rgba="0.8 0.8 0.8 1" contype="0" conaffinity="0" group="1"/>
+            <geom name="doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidariaikabu_hidarihizabu-2_collision" type="capsule" fromto="-0.0036 0.0022 0.0073 0.0137 -0.0145 0.0073" size="0.02" mass="0.095" rgba="0.2 1.0 0.2 0.3"/>
+
+                                <body name="doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidariaikabu_hidariashiura_hidariashiura-1" pos="0.01375000000000219 0.014799999999996927 0.007250000000000727" euler="-6.886852199629533e-16 1.9721522630525273e-29 -3.6609604237014486e-14">
+                                    <joint name="left_ankle_roll" type="hinge" axis="-3.752624096875581e-15 1.0000000000000004 8.396741372661635e-17" pos="-6.865297122576574e-08 -0.02927542353685292 1.7136325112084985e-09" range="-0.523599 0.436332" />
+                                    <!-- 足裏メッシュを直接衝突可能にする（高摩擦設定） -->
+                                    <geom name="doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidariaikabu_hidariashiura_hidariashiura-1_geom" type="mesh" mesh="doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidariaikabu_hidariashiura_hidariashiura-1" friction="1.5 0.005 0.0001" rgba="0.15 0.15 0.15 1" contype="0" conaffinity="0" group="1"/>
+            <geom name="doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidariaikabu_hidariashiura_hidariashiura-1_collision" type="box" size="0.0230 0.0600 0.0148" pos="0.0000 -0.0215 -0.0052" friction="1.5 0.005 0.0001" mass="0.016" rgba="0.2 1.0 0.2 0.3"/>
+
+                                    <!-- FSR センサーサイト -->
+                                    <site name="l_foot_fsr_fl" pos="0.012 0.027 -0.0541" type="box" size="0.005 0.005 0.001" rgba="0 1 0 1"/>
+                                    <site name="l_foot_fsr_fr" pos="-0.012 0.027 -0.0541" type="box" size="0.005 0.005 0.001" rgba="0 1 0 1"/>
+                                    <site name="l_foot_fsr_bl" pos="0.012 -0.070 -0.0541" type="box" size="0.005 0.005 0.001" rgba="0 1 0 1"/>
+                                    <site name="l_foot_fsr_br" pos="-0.012 -0.070 -0.0541" type="box" size="0.005 0.005 0.001" rgba="0 1 0 1"/>
+                                </body>
+                            </body>
+                        </body>
+                    </body>
+                </body >
+            </body >
+
+            <!-- ================= RIGHT LEG (右脚: 6関節) ================= -->
+            <body name="doutai-v5_migidaitou_migidaitou-1" pos="-0.03002400000000063 -0.0047749999999994585 -0.023599999999997418" euler="-3.1415926535897927 6.162975822039159e-33 -1.1865212859299895e-30">
+                <joint name="right_hip_yaw" type="hinge" axis="-2.775557561562896e-17 4.857225732735042e-16 0.9999999999999994" pos="2.40686529653511e-05 -0.01752542353685331 -0.02000000171363082" range="0.0 3.141593" />
+                <geom name="doutai-v5_migidaitou_migidaitou-1_geom" type="mesh" mesh="doutai-v5_migidaitou_migidaitou-1" rgba="0.8 0.8 0.8 1" contype="0" conaffinity="0" group="1"/>
+            <geom name="doutai-v5_migidaitou_migidaitou-1_collision" type="sphere" pos="0.0000 -0.0175 -0.0200" size="0.015" mass="0.008" rgba="0.2 1.0 0.2 0.3"/>
+
+                <body name="doutai-v5_migidaitou_migikokansetu_migikokansetu-1" pos="-0.013750000000000635 -0.0147999999999973 -0.005249999999999986" euler="-1.110223024625353e-16 1.214106236941712e-30 -3.372302437298862e-15">
+                    <joint name="right_hip_roll" type="hinge" axis="3.4555691641457512e-15 -1.0 3.7470027081096943e-16" pos="0.01375006865296604 -0.01447542353685597 0.0072499982863691685" range="-0.523599 0.523599" />
+                    <geom name="doutai-v5_migidaitou_migikokansetu_migikokansetu-1_geom" type="mesh" mesh="doutai-v5_migidaitou_migikokansetu_migikokansetu-1" rgba="0.8 0.8 0.8 1" contype="0" conaffinity="0" group="1"/>
+            <geom name="doutai-v5_migidaitou_migikokansetu_migikokansetu-1_collision" type="sphere" pos="0.0138 -0.0145 0.0072" size="0.02" mass="0.095" rgba="0.2 1.0 0.2 0.3"/>
+
+                    <body name="doutai-v5_migidaitou_migikokansetu_migimomo_migimomo-1" pos="-0.011199999999994539 -0.004150000000000164 0.08829182389825141" euler="-3.141592653589793 -1.7259532368477378e-15 3.141592653589787">
+                        <joint name="right_hip_pitch" type="hinge" axis="1.000000000000002 3.0156844789882454e-15 1.6981976612321095e-15" pos="-0.007600068652960711 0.00637457646314414 0.08104182561188226" range="-0.523599 1.047198" />
+                        <geom name="doutai-v5_migidaitou_migikokansetu_migimomo_migimomo-1_geom" type="mesh" mesh="doutai-v5_migidaitou_migikokansetu_migimomo_migimomo-1" rgba="0.8 0.8 0.8 1" contype="0" conaffinity="0" group="1"/>
+            <geom name="doutai-v5_migidaitou_migikokansetu_migimomo_migimomo-1_collision" type="capsule" fromto="-0.0076 0.0064 0.0810 -0.0076 0.0064 0.0123" size="0.02" mass="0.064" rgba="0.2 1.0 0.2 0.3"/>
+
+                        <body name="doutai-v5_migidaitou_migikokansetu_migimomo_migihizabu_migihizabu-1" pos="-0.03869999999999726 0.006374999999999287 -0.04425817610174837" euler="6.123233995737252e-17 -1.1396066603971625e-15 1.570796326794903">
+                            <joint name="right_knee" type="hinge" axis="-3.3083822366827893e-15 -1.0000000000000002 5.585910008349451e-16" pos="-4.235368553781126e-07 -0.031099931347036824 0.05660000171363065" range="-1.047198 0.523599" />
+                            <geom name="doutai-v5_migidaitou_migikokansetu_migimomo_migihizabu_migihizabu-1_geom" type="mesh" mesh="doutai-v5_migidaitou_migikokansetu_migimomo_migihizabu_migihizabu-1" rgba="0.8 0.8 0.8 1" contype="0" conaffinity="0" group="1"/>
+            <geom name="doutai-v5_migidaitou_migikokansetu_migimomo_migihizabu_migihizabu-1_collision" type="sphere" pos="0.0000 -0.0311 0.0566" size="0.015" mass="0.016" rgba="0.2 1.0 0.2 0.3"/>
+
+                            <body name="doutai-v5_migidaitou_migikokansetu_migimomo_migihizabu_migigaikabu_migigaikabu-1" pos="-0.0022249999999994162 -0.027500000000002637 -0.019349999999999895" euler="-1.6653345369377972e-16 7.754553812075034e-17 -1.5707963267949014">
+                                <joint name="right_ankle_pitch" type="hinge" axis="-0.9999999999999989 -2.0303615446334142e-15 -3.920575471411645e-16" pos="0.0035999313470341967 0.0022245764631440798 0.007250001713630512" range="-1.570796 0.436332" />
+                                <geom name="doutai-v5_migidaitou_migikokansetu_migimomo_migihizabu_migigaikabu_migigaikabu-1_geom" type="mesh" mesh="doutai-v5_migidaitou_migikokansetu_migimomo_migihizabu_migigaikabu_migigaikabu-1" rgba="0.8 0.8 0.8 1" contype="0" conaffinity="0" group="1"/>
+            <geom name="doutai-v5_migidaitou_migikokansetu_migimomo_migihizabu_migigaikabu_migigaikabu-1_collision" type="capsule" fromto="0.0036 0.0022 0.0073 -0.0138 -0.0145 0.0073" size="0.02" mass="0.095" rgba="0.2 1.0 0.2 0.3"/>
+
+                                <body name="doutai-v5_migidaitou_migikokansetu_migimomo_migihizabu_migigaikabu_migiashiura_migiashiura-1" pos="-0.01374999999999984 0.014799999999998533 0.007249999999999789" euler="-9.020562075079582e-16 -9.714451465470072e-17 3.330669073875475e-15">
+                                    <joint name="right_ankle_roll" type="hinge" axis="1.3003075292420552e-15 0.9999999999999998 1.3069474642901523e-15" pos="-6.865296604115251e-08 -0.029275423536854465 1.713630699048552e-09" range="-0.436332 0.436332" />
+                                    <!-- 足裏メッシュを直接衝突可能にする（高摩擦設定） -->
+                                    <geom name="doutai-v5_migidaitou_migikokansetu_migimomo_migihizabu_migigaikabu_migiashiura_migiashiura-1_geom" type="mesh" mesh="doutai-v5_migidaitou_migikokansetu_migimomo_migihizabu_migigaikabu_migiashiura_migiashiura-1" friction="1.5 0.005 0.0001" rgba="0.15 0.15 0.15 1" contype="0" conaffinity="0" group="1"/>
+            <geom name="doutai-v5_migidaitou_migikokansetu_migimomo_migihizabu_migigaikabu_migiashiura_migiashiura-1_collision" type="box" size="0.0230 0.0600 0.0148" pos="0.0000 -0.0215 -0.0052" friction="1.5 0.005 0.0001" mass="0.016" rgba="0.2 1.0 0.2 0.3"/>
+
+                                    <!-- FSR センサーサイト -->
+                                    <site name="r_foot_fsr_fl" pos="0.012 0.027 -0.0541" type="box" size="0.005 0.005 0.001" rgba="0 1 0 1"/>
+                                    <site name="r_foot_fsr_fr" pos="-0.012 0.027 -0.0541" type="box" size="0.005 0.005 0.001" rgba="0 1 0 1"/>
+                                    <site name="r_foot_fsr_bl" pos="0.012 -0.070 -0.0541" type="box" size="0.005 0.005 0.001" rgba="0 1 0 1"/>
+                                    <site name="r_foot_fsr_br" pos="-0.012 -0.070 -0.0541" type="box" size="0.005 0.005 0.001" rgba="0 1 0 1"/>
+                                </body>
+                            </body>
+                        </body>
+                    </body>
+                </body >
+            </body >
+        </body >
+    </worldbody>
+
+    <!-- ============================================================ -->
+    <!-- ACTUATORS: 行動空間の定義 (20 DoF - 脚6関節 / 腕4関節)          -->
+    <!-- RobotConfig.JOINT_NAMES の定義順に完全に一致させ、IDズレを防ぐ  -->
+    <!-- ============================================================ -->
+    <actuator>
+        <!-- 1. RIGHT LEG (右脚 6関節) -->
+        <position name="right_hip_yaw"      joint="right_hip_yaw"      kp="20" kv="0.5" ctrlrange="0.0 3.141593" />
+        <position name="right_hip_roll"     joint="right_hip_roll"     kp="20" kv="0.5" ctrlrange="-0.523599 0.523599" />
+        <position name="right_hip_pitch"    joint="right_hip_pitch"    kp="20" kv="0.5" ctrlrange="-0.523599 1.047198" />
+        <position name="right_knee"         joint="right_knee"         kp="20" kv="0.5" ctrlrange="-1.047198 0.523599" />
+        <position name="right_ankle_pitch"  joint="right_ankle_pitch"  kp="20" kv="0.5" ctrlrange="-1.570796 0.436332" />
+        <position name="right_ankle_roll"   joint="right_ankle_roll"   kp="20" kv="0.5" ctrlrange="-0.436332 0.436332" />
+        
+        <!-- 2. LEFT LEG (左脚 6関節) -->
+        <position name="left_hip_yaw"       joint="left_hip_yaw"       kp="20" kv="0.5" ctrlrange="-3.141593 0.0" />
+        <position name="left_hip_roll"      joint="left_hip_roll"      kp="20" kv="0.5" ctrlrange="-0.523599 0.523599" />
+        <position name="left_hip_pitch"     joint="left_hip_pitch"     kp="20" kv="0.5" ctrlrange="-1.047198 0.523599" />
+        <position name="left_knee"          joint="left_knee"          kp="20" kv="0.5" ctrlrange="-0.523599 1.047198" />
+        <position name="left_ankle_pitch"   joint="left_ankle_pitch"   kp="20" kv="0.5" ctrlrange="-0.436332 1.570796" />
+        <position name="left_ankle_roll"    joint="left_ankle_roll"    kp="20" kv="0.5" ctrlrange="-0.523599 0.436332" />
+
+        <!-- 3. RIGHT ARM (右腕 4関節) -->
+        <position name="right_shoulder_roll"  joint="right_shoulder_roll"  kp="20" kv="0.5" ctrlrange="-3.141593 3.141593" />
+        <position name="right_shoulder_pitch" joint="right_shoulder_pitch" kp="20" kv="0.5" ctrlrange="0.0 3.141593" />
+        <position name="right_elbow"          joint="right_elbow"          kp="20" kv="0.5" ctrlrange="0.0 3.141593" />
+        <position name="right_wrist_pitch"    joint="right_wrist_pitch"    kp="20" kv="0.5" ctrlrange="-1.570796 0.261799" />
+
+        <!-- 4. LEFT ARM (左腕 4関節) -->
+        <position name="left_shoulder_roll"   joint="left_shoulder_roll"   kp="20" kv="0.5" ctrlrange="-3.141593 3.141593" />
+        <position name="left_shoulder_pitch"  joint="left_shoulder_pitch"  kp="20" kv="0.5" ctrlrange="-3.141593 0.0" />
+        <position name="left_elbow"           joint="left_elbow"           kp="20" kv="0.5" ctrlrange="-3.141593 0.0" />
+        <position name="left_wrist_pitch"     joint="left_wrist_pitch"     kp="20" kv="0.5" ctrlrange="-0.261799 1.570796" />
+    </actuator>
+
+    <!-- ============================================================ -->
+    <!-- SENSORS: 状態空間の定義 (IMU & 8ch FSR足圧)                     -->
+    <!-- ============================================================ -->
+    <sensor>
+        <!-- BNO055 IMU データ -->
+        <gyro name="torso_gyro" site="imu_bno055_site" />
+        <accelerometer name="torso_accel" site="imu_bno055_site" />
+        <framequat name="torso_quat" objtype="site" objname="imu_bno055_site" />
+
+        <!-- 8チャンネル足裏FSR圧力センサー -->
+        <touch name="sensor_l_foot_fl" site="l_foot_fsr_fl" />
+        <touch name="sensor_l_foot_fr" site="l_foot_fsr_fr" />
+        <touch name="sensor_l_foot_bl" site="l_foot_fsr_bl" />
+        <touch name="sensor_l_foot_br" site="l_foot_fsr_br" />
+        <touch name="sensor_r_foot_fl" site="r_foot_fsr_fl" />
+        <touch name="sensor_r_foot_fr" site="r_foot_fsr_fr" />
+        <touch name="sensor_r_foot_bl" site="r_foot_fsr_bl" />
+        <touch name="sensor_r_foot_br" site="r_foot_fsr_br" />
+    </sensor>
+</mujoco>

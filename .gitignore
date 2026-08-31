@@ -1,0 +1,46 @@
+# ===============================
+# bipedal_robot .gitignore
+# ===============================
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# --- Virtual environments ---
+venv/
+venv_wsl/
+.venv/
+
+# --- JAX compilation cache ---
+.jax_cache/
+
+# --- IDE / Editor ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- Logs & checkpoints ---
+logs/
+log_test/
+*.log
+MUJOCO_LOG.TXT
+
+# --- Data artifacts ---
+trajectory.npy
+*.onnx
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Environment variables ---
+.env
+.env.local

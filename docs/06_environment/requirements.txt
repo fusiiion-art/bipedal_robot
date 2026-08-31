@@ -1,0 +1,20 @@
+# Numeric & Science
+numpy>=1.24.0
+
+# Deep Learning & RL
+jax[cuda12]
+jaxlib
+mujoco
+brax
+tensorflow>=2.10.0
+tf2onnx
+
+# Utils & Interactive
+Pillow
+ipython
+ipywidgets
+
+# (Hardware connection, e.g., robot)
+# pyserial
+# adafruit-blinka
+# adafruit-circuitpython-motor
