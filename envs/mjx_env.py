@@ -1,4 +1,5 @@
 from typing import Any, Dict, Tuple, Union
+import os
 import jax
 import jax.numpy as jp
 from brax import envs
@@ -10,21 +11,17 @@ from robot.config import RobotConfig
 from robot.math_utils import quat_to_euler
 from envs.actuator_model import ActuatorState, HX30HMModel
 
+
 class SenpuuMaruMJXEnv(PipelineEnv):
     """
-    MuJoCo XLA (MJX) を使用した GPU/TPU 並列学習用の強化学習環境
-    BraxのPipelineEnvを継承しているため、Brax PPOとシームレスに統合可能。
+    MuJoCo XLA (MJX) を使用した GPU/TPU 並列学習用の強化学習環境。
+    BraxのPipelineEnvを継承しており、Brax PPOとシームレスに統合可能。
     """
     
     def __init__(self, obs_noise: float = 0.01, latency_steps: int = 1, **kwargs):
-        import os
         model_path = str(RobotConfig.MUJOCO_MODEL_PATH)
-        if not os.path.exists(model_path):
-            model_path = str(RobotConfig.URDF_PATH)
-            
-        if not os.path.exists(model_path):
-            fallback_xml = """
-<mujoco model="fallback_humanoid">
+        
+        fallback_xml = """<mujoco model="fallback_humanoid">
   <option timestep="0.00416667" gravity="0 0 -9.8"/>
   <worldbody>
     <geom name="floor" type="plane" size="10 10 0.1" rgba="0.8 0.8 0.8 1" friction="1.0 0.5 0.5"/>
@@ -78,28 +75,29 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         self.obs_noise = obs_noise
         self.latency_steps = latency_steps
         
-        # [CRITICAL FIX] qpos関節順序（XML宣言順）とアクチュエータ/RobotConfigの関節順序の
-        # マッピングテーブルを構築。
-        # qpos: [left_shoulder_roll, ..., right_hip_yaw, ...] (XML body宣言順)
-        # actuator/config: [right_hip_yaw, ..., left_shoulder_roll, ...] (アクチュエータ宣言順)
-        # このマッピングがないと、DEFAULT_JOINT_ANGLESが間違った関節に適用される。
-        self._actuator_to_qpos_idx = []
+        actuator_to_qpos_list = []
         for act_i in range(sys_mj_model.nu):
             jnt_id = sys_mj_model.actuator_trnid[act_i][0]
-            # qpos内でのオフセットを算出 (freejointの後のインデックス)
             qpos_adr = sys_mj_model.jnt_qposadr[jnt_id]
-            self._actuator_to_qpos_idx.append(qpos_adr)
-        self._actuator_to_qpos_idx = jp.array(self._actuator_to_qpos_idx, dtype=jp.int32)
+            actuator_to_qpos_list.append(qpos_adr)
+        self._actuator_to_qpos_idx = jp.array(actuator_to_qpos_list, dtype=jp.int32)
         
         from envs.mjx_rewards import MJXRewardSystem
-        # mujoco.mj_name2id を使用してボディ名からIDを確実に取得
         left_foot_id = mujoco.mj_name2id(sys_mj_model, mujoco.mjtObj.mjOBJ_BODY, 'doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidariaikabu_hidariashiura_hidariashiura-1')
         right_foot_id = mujoco.mj_name2id(sys_mj_model, mujoco.mjtObj.mjOBJ_BODY, 'doutai-v5_migidaitou_migikokansetu_migimomo_migihizabu_migigaikabu_migiashiura_migiashiura-1')
         
-        # 万が一名前が変わっていた場合のフォールバック（部分一致検索）
+        # [FIX 5] 安全な足裏IDのフォールバック検索（IndexError回避）
         if left_foot_id == -1 or right_foot_id == -1:
-             left_foot_id = [i for i in range(sys_mj_model.nbody) if 'hidariashiura' in sys_mj_model.body(i).name][0]
-             right_foot_id = [i for i in range(sys_mj_model.nbody) if 'migiashiura' in sys_mj_model.body(i).name][0]
+            left_matches = [i for i in range(sys_mj_model.nbody) if 'hidariashiura' in sys_mj_model.body(i).name]
+            right_matches = [i for i in range(sys_mj_model.nbody) if 'migiashiura' in sys_mj_model.body(i).name]
+            
+            if not left_matches or not right_matches:
+                raise RuntimeError(
+                    f"Could not find foot bodies in MuJoCo model. "
+                    f"Left matches: {left_matches}, Right matches: {right_matches}"
+                )
+            left_foot_id = left_matches[0]
+            right_foot_id = right_matches[0]
 
         self._reward_system = MJXRewardSystem(self._mjx_model, RobotConfig.REWARD_WEIGHTS, left_foot_id, right_foot_id)
         
@@ -115,19 +113,7 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         return RobotConfig.OBS_DIM
 
     def _get_curriculum_scale(self, training_progress: float) -> float:
-        """
-        カリキュラム学習: 学習進捗率に応じた外乱強度スケーリング
-        
-        [FIX] CRITICAL-1: 旧実装では global_step がエピソード毎に0にリセットされる
-        ため、絶対ステップ数の閾値に到達不可能だった。
-        training_progress (0.0～1.0) を直接使用することで修正。
-        
-        Args:
-            training_progress: 学習進捗率 (0.0～1.0)、TrainingProgressWrapperから供給
-            
-        Returns:
-            scale: [0, 1] のスケーリング係数
-        """
+        """カリキュラム学習: 学習進捗率に応じた外乱強度スケーリング"""
         schedule = RobotConfig.CURRICULUM_SCHEDULE_FRACTIONS
         keys = sorted(schedule.keys())
         
@@ -136,7 +122,6 @@ class SenpuuMaruMJXEnv(PipelineEnv):
             scale = jp.where(training_progress >= key, jp.array(schedule[key], dtype=jp.float32), scale)
         
         return jp.clip(scale, 0.0, 1.0)
-
 
     def reset(self, rng: jax.Array) -> State:
         rng, rng_noise, rng_priv = jax.random.split(rng, 3)
@@ -156,16 +141,12 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         nq = self._mjx_model.nq
         qpos = jp.zeros(nq)
         if nq >= 7:
-            # [CRITICAL FIX] DEFAULT_JOINT_ANGLES はアクチュエータ順序（脚→腕）だが、
-            # qpos は XML 宣言順序（腕→脚）。マッピングテーブルを使って
-            # 各関節角度を正しい qpos インデックスに配置する。
-            default_angles = jp.array(RobotConfig.DEFAULT_JOINT_ANGLES)
-            for act_i in range(min(len(RobotConfig.DEFAULT_JOINT_ANGLES), self._mjx_model.nu)):
-                qpos_idx = self._actuator_to_qpos_idx[act_i]
-                qpos = qpos.at[qpos_idx].set(default_angles[act_i])
+            # [FIX 1] vmap/jitに安全なJAX配列一括更新へ最適化
+            num_act = min(len(RobotConfig.DEFAULT_JOINT_ANGLES), self._mjx_model.nu)
+            default_angles = jp.array(RobotConfig.DEFAULT_JOINT_ANGLES[:num_act])
+            target_indices = self._actuator_to_qpos_idx[:num_act]
+            qpos = qpos.at[target_indices].set(default_angles)
             
-            # [FIX] 足裏が地面 (z=0) にピッタリ接地する高さ
-            # MuJoCo単体検証で確認: z=0.1773m が適正な接地高さ
             qpos = qpos.at[0:3].set(jp.array([0.0, 0.0, 0.1773]))
             qpos = qpos.at[3:7].set(jp.array([1.0, 0.0, 0.0, 0.0]))
             
@@ -176,7 +157,7 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         
         info = {
             'step': 0,
-            'global_step': 0,  # 累積学習ステップ（リセット跨ぎ）
+            'global_step': 0,
             'phase': 0.0,
             'last_action': jp.zeros(self._mjx_model.nu),
             'action_buffer': jp.zeros(self._mjx_model.nu),
@@ -194,10 +175,10 @@ class SenpuuMaruMJXEnv(PipelineEnv):
             'privileged_obs': privileged_obs,
             'last_potential': initial_potential,
             'rng_key': rng_noise,
-            'was_disturbed': jp.array(False),  # 前ステップで外乱があったか
-            'disturbance_recovery_steps': jp.array(1000),  # 外乱から何ステップ経過したか
-            'training_progress': jp.array(0.0),  # 学習進捗率 (0.0~1.0) — TrainingProgressWrapper から供給
-            '_env_steps': jp.array(0, dtype=jp.int32),  # 累積環境ステップ — TrainingProgressWrapper が管理
+            'was_disturbed': jp.array(False),
+            'disturbance_recovery_steps': jp.array(1000),
+            'training_progress': jp.array(0.0),
+            '_env_steps': jp.array(0, dtype=jp.int32),
             'terminated': jp.array(False),
             'truncated': jp.array(False),
             'time_out': jp.array(0.0),
@@ -220,20 +201,18 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         
         return State(mjx_data, obs, reward, done, metrics, info)
 
-
     def step(self, state: State, action: jax.Array) -> State:
         info = state.info.copy()
         
+        # [FIX 3] 歩行参照モードかどうかに応じて target_rad と位相更新を切り替え
         if RobotConfig.USE_REFERENCE_GAIT:
             residual_rad = action * RobotConfig.ACTION_SCALE * 0.5
             base_target_rad = info.get('reference_action', jp.zeros(self._mjx_model.nu))
             target_rad = base_target_rad + residual_rad
         else:
-            default_pose = jp.array(RobotConfig.DEFAULT_JOINT_ANGLES)
+            default_pose = jp.array(RobotConfig.DEFAULT_JOINT_ANGLES[:self._mjx_model.nu])
             target_rad = default_pose + action * RobotConfig.ACTION_SCALE
 
-        # Standing-only mission constraint: target body velocity must remain zero.
-        # This prevents walking objectives from creeping back into the task.
         if getattr(RobotConfig, 'TARGET_VEL_X', 0.0) != 0.0 or getattr(RobotConfig, 'TARGET_VEL_Y', 0.0) != 0.0 or getattr(RobotConfig, 'TARGET_YAW_RATE', 0.0) != 0.0:
             raise ValueError("Standing-only mission requires TARGET_VEL_X/Y/YAW_RATE all zero.")
         
@@ -252,7 +231,7 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         filtered_action = (1.0 - alpha) * current_cmd + alpha * constrained_target
         info['filtered_action'] = filtered_action
         
-        # Apply CBF Safety Filter (XMLの可動域を使用)
+        # Apply CBF Safety Filter
         limit_lower = self._mjx_model.actuator_ctrlrange[:, 0]
         limit_upper = self._mjx_model.actuator_ctrlrange[:, 1]
         
@@ -274,16 +253,15 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         ah = ah.at[-1].set(real_target_rad)
         info['action_history'] = ah
         
-        rng_delay, rng_push, next_rng = jax.random.split(info['rng_key'], 3)
+        # [FIX 4] 乱数キーの動的分割 (PRNGKey(step) による固定乱数バグ解消)
+        rng_delay, rng_push, rng_obs, next_rng = jax.random.split(info['rng_key'], 4)
         info['rng_key'] = next_rng
+        
         delay_idx = jax.random.randint(rng_delay, shape=(), minval=0, maxval=3)
         applied_action = ah[RobotConfig.HISTORY_LEN - 1 - delay_idx]
         
-        # External disturbance
-        # Phase 0 / Gate 0: external pushes are disabled until the standing-only
-        # static baseline is validated. This prevents noisy disturbance signals from
-        # destabilizing the PPO optimization before the base controller is stable.
-        disturbance_enabled = bool(getattr(RobotConfig, 'DISTURBANCE_CURRICULUM', False))
+        # [FIX 2] JIT時の ConcretizationTypeError 回避のために bool() キャストを削除
+        disturbance_enabled = getattr(RobotConfig, 'DISTURBANCE_CURRICULUM', False)
         if disturbance_enabled:
             curriculum_disturbance_scale = self._get_curriculum_scale(info.get('training_progress', jp.array(0.0)))
             current_max_force = RobotConfig.RANDOM_PUSH_MAX_FORCE * curriculum_disturbance_scale
@@ -300,8 +278,6 @@ class SenpuuMaruMJXEnv(PipelineEnv):
             is_push_step = jp.array(False)
             push_force = jp.zeros(3)
 
-        # Standing-only policy must not generate stepping incentives.
-        # This task is intentionally a static balancing task; no walking controller is allowed.
         if getattr(RobotConfig, 'ALLOW_WALKING', False) or getattr(RobotConfig, 'ALLOW_STEPPING', False):
             raise ValueError("Walking/stepping is forbidden for this task.")
         
@@ -309,7 +285,6 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         if self._mjx_model.nq >= 7:
             qfrc_applied = qfrc_applied.at[0:3].set(push_force)
             
-        # Domain Randomization: friction & damping
         joint_vel = state.pipeline_state.qvel[6:] if self._mjx_model.nq >= 7 else state.pipeline_state.qvel
         damping_torque = -info['dr_damping'] * joint_vel
         friction_torque = -info['dr_friction'] * jp.sign(joint_vel)
@@ -319,7 +294,6 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         else:
             qfrc_applied = qfrc_applied.add(damping_torque + friction_torque)
 
-        # Physics simulation
         def physics_step(carry, _):
             d = carry.replace(ctrl=applied_action, qfrc_applied=qfrc_applied)
             d = mjx.step(self._mjx_model, d)
@@ -327,14 +301,10 @@ class SenpuuMaruMJXEnv(PipelineEnv):
             
         mjx_data, _ = jax.lax.scan(physics_step, state.pipeline_state, (), length=RobotConfig.CONTROL_DECIMATION)
         
-        # Reward and termination
-        # 外乱検出：前ステップでプッシュがあったか
         was_disturbed = jp.array(is_push_step, dtype=jp.bool_)
-        
-        # 外乱復帰ステップ計数
         disturbance_recovery_steps = jp.where(
             is_push_step,
-            jp.array(0),  # 新しい外乱
+            jp.array(0),
             info.get('disturbance_recovery_steps', jp.array(0)) + 1
         )
         
@@ -359,7 +329,13 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         env_steps = jp.asarray(info.get('_env_steps', info.get('global_step', 0)), dtype=jp.int32) + 1
         info['_env_steps'] = env_steps
         info['global_step'] = env_steps
-        info['phase'] = (info.get('phase', 0.0) + RobotConfig.CONTROL_DT / RobotConfig.GAIT_PERIOD) % 1.0
+        
+        # [FIX 3] 歩行タスク以外では位相の進行を停止 (Standing-onlyは phase=0.0 固定)
+        if RobotConfig.USE_REFERENCE_GAIT:
+            info['phase'] = (info.get('phase', 0.0) + RobotConfig.CONTROL_DT / RobotConfig.GAIT_PERIOD) % 1.0
+        else:
+            info['phase'] = 0.0
+            
         info['disturbance_recovery_steps'] = disturbance_recovery_steps
         info['was_disturbed'] = was_disturbed
         if '_env_steps' not in state.info:
@@ -376,8 +352,8 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         info['truncated'] = truncated
         info['time_out'] = truncated.astype(jp.float32)
         
-        rng_noise = jax.random.PRNGKey(info['step'])
-        obs, info = self._get_obs(mjx_data, info, rng_noise)
+        # [FIX 4] 生成された乱数キー `rng_obs` を観測ノイズ生成に使用
+        obs, info = self._get_obs(mjx_data, info, rng_obs)
         
         return state.replace(pipeline_state=mjx_data, obs=obs, reward=reward,
                              done=done.astype(jp.float32), metrics=metrics, info=info)
@@ -425,17 +401,19 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         noisy_obs = noisy_obs.at[0:3].add(pos_noise)
         noisy_obs = noisy_obs.at[6:9].add(vel_noise)
         
+        # [FIX 3] 歩行タスク以外での無駄な軌道計算をバイパス
         phase = info.get('phase', 0.0)
         phase_obs = jp.array([jp.sin(2 * jp.pi * phase), jp.cos(2 * jp.pi * phase)])
         
-        from robot.gait_generator import jax_get_reference_trajectory
-        ref_angles = jax_get_reference_trajectory(phase, self._mjx_model.nu)
-        info['reference_action'] = ref_angles
-        
-        if not RobotConfig.USE_REFERENCE_GAIT:
-            ref_angles_obs = jp.zeros_like(ref_angles)
-        else:
+        if RobotConfig.USE_REFERENCE_GAIT:
+            from robot.gait_generator import jax_get_reference_trajectory
+            ref_angles = jax_get_reference_trajectory(phase, self._mjx_model.nu)
             ref_angles_obs = ref_angles
+        else:
+            ref_angles = jp.array(RobotConfig.DEFAULT_JOINT_ANGLES[:self._mjx_model.nu])
+            ref_angles_obs = jp.zeros_like(ref_angles)
+            
+        info['reference_action'] = ref_angles
         
         base_obs = jp.concatenate([noisy_obs, phase_obs, ref_angles_obs])
         
@@ -451,6 +429,13 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         supply_volt = jp.array([info.get('supply_volt', 11.1)])
         
         final_obs = jp.concatenate([base_obs, flat_obs_hist, flat_act_hist, servo_temp, supply_volt])
+        
+        # [FIX 6] 観測配列の次元と Config 側定数の整合性をトレーシング時にアサート確認
+        assert final_obs.shape[0] == RobotConfig.OBS_DIM, (
+            f"Observation shape mismatch: computed {final_obs.shape[0]}, "
+            f"but RobotConfig.OBS_DIM is configured as {RobotConfig.OBS_DIM}."
+        )
+        
         return final_obs, info
 
 
