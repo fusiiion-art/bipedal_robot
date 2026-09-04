@@ -10,7 +10,7 @@ class RobotConfig:
     - Servo Driver: Hiwonder BusLinker V3.0 (x4, UART 1Mbps)
     - Actuator: Hiwonder HX-30HM (x20)
     - IMU: BNO055 (UART接続 — I2Cクロックストレッチング回避)
-    - FSR ADC: MCP3208 (SPI, 8ch<1ms — ADS1115/I2Cの68ms問題を解決)
+    - FSR判定: Teensy 4.1オンチップADCで読み取り、閾値判定した8ch二値信号
     - 足裏: FSR402 (x8)
     """
 
@@ -20,11 +20,12 @@ class RobotConfig:
     OUTPUT_DIR = BASE_DIR / "log"
 
     # --- 1.1. FSR Hardware Layout ---
-    # 8ch FSR positions relative to each foot center, used for ZMP/CoP approximation.
+    # 実機ではTeensy側で接地判定するため、位置はシミュレーション専用。
     FSR_POSITIONS = np.array([
         [-0.08, -0.04], [0.08, -0.04], [-0.08, 0.04], [0.08, 0.04],  # Right foot
         [-0.08,  0.04], [0.08,  0.04], [-0.08, -0.04], [0.08, -0.04],  # Left foot
     ])
+    FSR_CONTACT_THRESHOLD = 0.5
     
     # --- 2. Hardware Specs ---
     ROBOT_NAME = "SenpuuMaru_GIY_Type"
@@ -100,6 +101,9 @@ class RobotConfig:
     RANDOM_COM_OFFSET = [-0.02, 0.02]  # Phase 1: 重心偏差を最小化
     RANDOM_PUSH_MAX_FORCE = 0.0  # Phase 0: Gate 0 / Gate A を先に確定し、外乱導入は後に行う
     DISTURBANCE_CURRICULUM = False  # Phase 0 では外乱を無効化して静止直立を安定化させる
+    PUSH_DIRECTIONS = 8  # 水平方向を8方位で評価
+    PUSH_DURATION_STEPS = 1  # 100Hz制御での印加時間（既定10ms）
+    PUSH_FORCE_LEVELS = [0.0, 1.0, 2.0, 3.0]  # [N] 評価時に明示的に掃引する値
     
     # --- カリキュラム学習: 外乱強度スケジュール ---
     #
@@ -191,6 +195,7 @@ class RobotConfig:
     MAX_SINGLE_FOOT_LIFT = 0.0
     ALLOW_ARM_SWING = True
     ARM_SWING_LIMIT_DEG = 12.0
+    FOOT_CONTACT_THRESHOLD = 0.05  # [N] シミュレーション上の各足の最小接触力
     
     # ======================================================
     # 次世代・外乱耐性特化 報酬ウェイト (Phase-Dependent Architecture)
@@ -206,6 +211,7 @@ class RobotConfig:
         "upright": 12.0,
         "target_pose": 4.0,
         "com_stab": 10.0,
+        "both_feet_contact": 8.0,
 
         # 外乱が無い Phase 0/1 では回復ボーナスは控えめにする
         "capture_point": 0.5,

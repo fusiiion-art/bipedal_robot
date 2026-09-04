@@ -24,8 +24,7 @@ except ImportError:
     print("[Warn] onnxruntime not found. Policy will run in dummy mode.")
     ort = None
 
-from real.real_io import BNO055UART, MCP3208SPI, BusLinkerV3
-from safety.sensor_fusion import SensorFusion
+from real.real_io import TeensySpineIO
 from robot.math_utils import quat_to_euler
 from robot.config import RobotConfig
 from robot.gait_generator import numpy_get_reference_trajectory
@@ -204,10 +203,10 @@ class RealRobotEnv:
         
         # --- ハードウェアI/O ---
         print("[Info] Initializing RealRobotEnv (100Hz target)...")
-        self.imu = BNO055UART()
-        self.fsr_adc = MCP3208SPI()
-        self.servos = BusLinkerV3()
-        self.sensor_fusion = SensorFusion()
+        self.spine = TeensySpineIO(num_servos=self.NUM_JOINTS)
+        self.imu_data, self.fsr_contacts, self.servo_temps, self.servo_voltages = (
+            self.spine.communicate(np.zeros(self.NUM_JOINTS))
+        )
         
         # --- 共有メモリ管理 (3重防御) ---
         self.shm_manager = SharedMemoryManager()
@@ -272,7 +271,7 @@ class RealRobotEnv:
         + 電源電圧 (1)
         """
         # --- 1. IMU (UART経由, ブロッキングなし) ---
-        imu_data = self.imu.get_imu_data()
+        imu_data = self.imu_data
         quat = imu_data["quat"]
         gyro = imu_data["gyro"]
         lin_accel = imu_data["lin_accel"]
@@ -290,13 +289,13 @@ class RealRobotEnv:
         # 接地検出時にドリフトをリセットする
         self._vel_estimate += lin_accel * self.dt
         
-        # --- 3. FSR + ZMP (SPI経由, <0.5ms, 1回だけ読む) ---
-        fsr_raw = self.fsr_adc.read_all_channels()  # 8ch全読み
-        zmp_xy, _ = self.sensor_fusion.get_zmp_and_contact(fsr_raw)
+        # --- 3. FSR接地フラグ (TeensyオンチップADCで判定済み) ---
+        fsr_raw = self.fsr_contacts
+        zmp_xy = np.zeros(2)  # 実機ではCoP/ZMPを算出しない
         
         # ZUPT: FSRが両足とも接地を検出 → 速度をゼロリセット
-        right_contact = np.sum(fsr_raw[:4]) > 0.15
-        left_contact = np.sum(fsr_raw[4:]) > 0.15
+        right_contact = np.any(fsr_raw[:4] > 0.5)
+        left_contact = np.any(fsr_raw[4:] > 0.5)
         if right_contact and left_contact:
             # 両足接地 = 静止推定 → ドリフトリセット
             self._vel_estimate *= 0.1  # 急なゼロリセットではなく減衰
@@ -345,8 +344,8 @@ class RealRobotEnv:
         act_hist_flat = np.concatenate(list(self.act_history))   # 20×5 = 100
         
         # --- 8. 温度・電圧 (インターリーブReadから取得, 10Hz更新) ---
-        servo_temp = self.servos.servo_temps.copy()     # 20
-        supply_volt = np.array([np.mean(self.servos.servo_voltages)])  # 1
+        servo_temp = self.servo_temps.copy()     # 20
+        supply_volt = np.array([np.mean(self.servo_voltages)])  # 1
         
         # --- 9. 最終観測ベクトル (625次元) ---
         obs = np.concatenate([
@@ -411,12 +410,11 @@ class RealRobotEnv:
                 action = self.step(obs)
                 
                 # 3. サーボへ一括送信 (Sync Write, 0.65ms)
-                self.servos.sync_write_positions(action, move_time_ms=int(self.dt * 1000))
+                self.imu_data, self.fsr_contacts, self.servo_temps, self.servo_voltages = (
+                    self.spine.communicate(action)
+                )
                 
-                # 4. インターリーブRead (2台/ループ, ~0.4ms)
-                self.servos.interleave_read_status()
-                
-                # 5. RMA latent を共有メモリから読み取り (非同期更新)
+                # 4. RMA latent を共有メモリから読み取り (非同期更新)
                 self.latent_vector[:] = np.frombuffer(
                     self.shm_latent.buf[:32], dtype=np.float32
                 )
@@ -441,11 +439,10 @@ class RealRobotEnv:
         """安全なシャットダウン"""
         print("[Info] Zeroing servos and releasing resources...")
         # サーボをニュートラルに
-        self.servos.sync_write_positions(np.zeros(self.NUM_JOINTS), move_time_ms=500)
+        self.spine.communicate(np.zeros(self.NUM_JOINTS))
         time.sleep(0.5)
         
-        self.servos.close()
-        self.fsr_adc.close()
+        self.spine.close()
         self.shm_manager.cleanup()
         print("[Info] Shutdown complete.")
 

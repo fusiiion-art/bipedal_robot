@@ -10,7 +10,7 @@
 - 📄 [旋風丸_開発計画書_完全版.md](file:///c:/bipedal_robot/docs/01_plans/旋風丸_開発計画書_完全版.md) **【マスター開発計画書 (SSOT)】**  
   全世代・Sim-to-Real統合・理論・電気・制御を網羅したマスタープラン v1.1.2。
 - 📄 [旋風丸_V1_Biped_統合開発計画書_決定版.md](file:///c:/bipedal_robot/docs/01_plans/旋風丸_V1_Biped_統合開発計画書_決定版.md) **【V1実機仕様（完全決定版）】**  
-  Teensy 4.1 脊髄実装 (TeensySpineIO)、3S LiPo 11.1V、20自由度（頭部なし）、SPI1 配線を完全確定したV1仕様書。
+  Teensy 4.1 脊髄実装 (TeensySpineIO)、3S LiPo 11.1V、20自由度（頭部なし）、FSRオンチップADC二値判定を確定したV1仕様書。
 - 📄 [旋風丸_V1_設計レビュー統合.md](file:///c:/bipedal_robot/docs/01_plans/旋風丸_V1_設計レビュー統合.md) **【評価レビューアーカイブ】**  
   外部AIおよび査定結果の集約。
 - 📄 [PROJECT_GOAL.md](file:///c:/bipedal_robot/docs/01_plans/PROJECT_GOAL.md)  
@@ -20,7 +20,7 @@
 
 ### 2. 02_hardware/ (ハードウェア・部品構成)
 - 📄 [HARDWARE_SPECS_AND_BOM.md](file:///c:/bipedal_robot/docs/02_hardware/HARDWARE_SPECS_AND_BOM.md) **【統合ハードウェア仕様 ＆ 改訂版BOM】**  
-  3S LiPo (11.1V)、5V/5A 降圧UBEC、40A ヒューズ、AWG12 配線、AE-LLCNV-LVCH16T245 レベル変換、SPI1 MCP3208、完全BOM表。
+  3S LiPo (11.1V)、5V/5A 降圧UBEC、40A ヒューズ、AWG12 配線、AE-LLCNV-LVCH16T245 レベル変換、FSR×8、完全BOM表。
 
 ---
 

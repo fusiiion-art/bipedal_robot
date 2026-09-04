@@ -373,6 +373,11 @@ class MJXRewardSystem:
         has_sensors = data.sensordata.shape[0] > 0
         left_foot_force = jp.where(has_sensors, jp.clip(jp.mean(jp.abs(data.sensordata[0:4] + 1e-6)), 0.0, 100.0), 0.5)
         right_foot_force = jp.where(has_sensors, jp.clip(jp.mean(jp.abs(data.sensordata[4:8] + 1e-6)), 0.0, 100.0), 0.5)
+        contact_threshold = getattr(RobotConfig, 'FOOT_CONTACT_THRESHOLD', 0.05)
+        both_feet_contact = jp.logical_and(
+            left_foot_force > contact_threshold,
+            right_foot_force > contact_threshold,
+        )
 
         cp_margin_norm_dist = getattr(RobotConfig, 'CP_MARGIN_NORM_DIST', 0.15)
         stability_index, stability_metrics = self._stability.compute_unified_stability_index(
@@ -399,6 +404,7 @@ class MJXRewardSystem:
         r_upright = jp.exp(-30.0 * tilt_err**2)
         r_still = jp.exp(-20.0 * (body_vel_xy**2 + body_yaw_rate**2))
         r_target_pose = jp.exp(-5.0 * (base_pos[0]**2 + base_pos[1]**2 + rpy[2]**2))
+        r_both_feet_contact = both_feet_contact.astype(jp.float32)
 
         # --- Capture Point 報酬 [FIX: 多重ゲート撤廃 + swing-foot対応] ---
         p_cp = stability_metrics['cp_point']  # StabilityMetrics側と重複計算せず再利用(DRY)
@@ -519,6 +525,7 @@ class MJXRewardSystem:
             r_upright * w['upright'] +
             r_still * w['com_stab'] +
             r_target_pose * w['target_pose'] +
+            r_both_feet_contact * w.get('both_feet_contact', 0.0) +
 
             lambda_phase * (
                 r_com_stab * w['com_stab']
@@ -554,6 +561,7 @@ class MJXRewardSystem:
             'r_cp': r_capture_point,
             'r_recovery': r_recovery,
             'r_com_stab': r_com_stab,
+            'both_feet_contact': r_both_feet_contact,
             'pbrs_reward': r_pbrs,
             'potential': current_potential,
             'fall_penalty': jp.where(done, w['fall_penalty'], 0.0),

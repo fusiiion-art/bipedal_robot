@@ -2,10 +2,7 @@
 
 作成日: 2026-08-27 改訂履歴:
 
-- 2026-08-28: standing\_robustness\_plan\_v4.mdの全文を付録Aとして本文書に統合。外部ファイル参照ではなく本文書単体で完結する構成に変更（standing\_robustness\_plan\_v2.mdは本文書作成者が原文を保持していないため未統合。統合が必要な場合は原文を提供してください）  
-- 2026-08-28: 参照セクションが一部欠落していたため、master\_plan.md（v3）を土台文書として明記し復元  
-- 2026-08-28: Task 1にtarget\_kl early stopping（保険）を追加。std下限クリップ修正が根本原因への対処である一方、KL健全化の二段目の防波堤として低コストで追加できるため。  
-- 2026-08-28: タスク8に実機質量計測の前提条件を追加。各STLパーツ（特にモータ・センサー・バッテリー搭載部）の実測重量が未確定なため、Phase \-1算出値は実測完了まで暫定扱いとする。 他の内容はv3から変更なし。 最終目標: **外乱（突き・押し）を受けても転倒せず、両足接地の直立姿勢を維持する** 参照: `master_plan.md`（v3、本文書の土台。2026-08-27作成、Claudeとの検討を経てv4→v7へ改訂）、`standing_robustness_plan_v4.md`（詳細仕様。付録Aとして全文統合済み）、`standing_robustness_plan_v2.md`（Gate定義の一次ソース。原文未保持のため未統合、本文中の言及のみ）、`課題管理.md`（課題ID台帳）
+目的は外乱耐性を獲得して外乱（突き・押し）を受けても転倒せず、両足を接地したまま直立姿勢を維持すること（ロボワンの試合で胴体を突かれても、歩行や足の踏み替えをせず、その場で立ち続ける）。歩行そのものは目的外です。
 
 ## 0\. この文書の位置づけ
 
@@ -90,9 +87,9 @@
 - 任意の(state, action)で1ステップ報酬の下限が正であること（`r_min > 0`。alive bonus撤廃時に生じる「早く転んだ方が得」という逆方向ハックを防ぐ）  
 - 転倒による終端ペナルティは`terminated`のみに適用され、`truncated`には適用されないこと（タスク2との整合）
 
-また、成功条件を`episode_alive`単体ではなく以下の論理積で再定義する（`configs/standing/success_criteria.yaml`に数値定義。本書ではなく設定ファイルを正とする）:
+また、成功条件を`episode_alive`単体ではなく以下の論理積で定義する。閾値の正本は`robot/config.py`と`envs/mjx_rewards.py`とする:
 
-success \= alive(T) AND upright AND height\_ok AND no\_illegal\_contact
+success \= alive(T) AND both\_feet\_contact AND upright AND height\_ok AND no\_illegal\_contact
 
           AND slip\_ok AND torque\_ok AND (外乱時) recovered\_in\_time
 
@@ -123,7 +120,7 @@ Debug PASSを満たしたら\*\*Qualification PASS（3 seeds: 0,1,2）\*\*を実
 
 1. トルク限界・支持余裕・摩擦から`F_max`、`v_cap`、`J_max`(N·s)、`θ_max ≈ min(arctan(μ), arctan(d/h))`を算出し`docs/physical_limits.md`に記録する  
 2. 目標とする外乱スペック（突っつきインパルス\[N·s\]、静的傾斜角\[deg\]があれば）を数値で確定し、Phase-1限界値との\*\*余裕度（限界/目標）\*\*を計算する  
-3. **余裕度が1.0を下回る項目がある場合**、現在の`standing_fixed_feet`（足を動かさず腰・足首戦略のみで復帰）のままでは目標に届かない可能性が高い。この場合はGate Aへは進んで良いが、**Gate Bには進まず、エスカレーション基準7章-4に従って人間の判断を仰ぐ**（目標値の見直し、または`standing_with_recovery_step`への制約緩和）
+3. **余裕度が1.0を下回る項目がある場合**、現在の`standing_fixed_feet`（足を動かさず腰・足首戦略のみで復帰）のままでは目標に届かない可能性が高い。この場合は**Gate Bへ進まず、目標値または機体仕様を人間が再判断するまで停止する**。歩行・踏み替えを代替目標として導入しない。
 
 ---
 
@@ -321,9 +318,8 @@ v3では「外乱に耐えて転倒しない」という目標に対し、耐え
 
 ### 0.2 standing制約のレベル定義
 
-- **standing\_fixed\_feet**（本計画のスコープ）: 足裏接地点を大きく移動させない直立維持。ankle/hip strategyのみで回復する。  
-- **standing\_with\_recovery\_step**: 一歩程度の踏み出しを許す。0.1の余裕度が不足する場合の代替スコープ。  
-- **walking\_robustness**: 歩行中の外乱耐性。本計画の対象外、将来の別計画とする。
+- **standing\_fixed\_feet**（本計画の唯一のスコープ）: 左右両足を接地したまま、ankle/hip strategyのみで外乱から回復する。足の踏み替え、歩行、支持基底の変更は許可しない。
+- `standing_with_recovery_step`と`walking_robustness`は本リポジトリでは扱わない。
 
 ### 0.3 「転倒しない」の成功条件（多層定義）
 
@@ -332,6 +328,8 @@ v3では「外乱に耐えて転倒しない」という目標に対し、耐え
 success \=
 
     alive(T)
+
+    AND both_feet_contact     (左右の足裏接触フラグが有効)
 
     AND upright              (torso tiltが閾値以内)
 
@@ -345,7 +343,7 @@ success \=
 
     AND (外乱時) recovered\_in\_time  (外乱後、規定秒数内に姿勢誤差・角速度が回復範囲内に戻る)
 
-各閾値は`configs/standing/success_criteria.yaml`（新規）に数値で定義し、本書ではなく設定ファイルを正とする。目安値は§0.4で物理限界から逆算して記載する。
+閾値は現行の`robot/config.py`と`envs/mjx_rewards.py`を正とする。新しい閾値ファイルは追加しない。
 
 ### 0.4 物理限界値の転記（Phase \-1結果）
 
@@ -387,7 +385,7 @@ Phase \-1の計算結果を以下に転記する（**空欄のままGate Bに進
 
 `500 step`は単独では意味を持たない。以降すべての基準はstepと秒を併記する。
 
-### 1.2 座標系（傾斜床対応・最重要）
+### 1.2 座標系（最重要）
 
 - **姿勢誤差**: world鉛直（重力方向）基準。傾斜面に胴体を垂直に立てると転倒するため、床法線基準は使わない。  
 - **高さ**: 足裏接地点を原点とする相対高さ。world zで判定すると傾斜の下り側で偽の転倒判定が出るため使わない。  

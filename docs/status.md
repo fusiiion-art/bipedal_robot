@@ -1,20 +1,24 @@
 # 進捗ステータス
 
-最終更新: \<日時を記入\> 最終更新者: \<Copilot / 人間\>
+最終更新: 2026-09-03（Copilot）
 
 ## 現在地
 
-- 完了Task: \<なし。初回はここに現状棚卸しの結果を記入\>  
-- 着手中Task: \<未定\>  
-- 次のTask: \<docs/master\_plan.mdのTask順に従う\>
+- 完了: FSR実機経路をTeensyオンチップADCの二値接地判定へ統一。実機のMCP3208/MCP6004/SPI依存を削除。
+- 目的確定: 歩行・踏み替えなしで、外乱後も両足接地の直立姿勢を維持する固定足立位。
+- 学習前検証: 固定足設定、両足接地報酬、外乱力レベル／力積／方向数／印加時間の定義を追加。
+- 評価基盤: 成功率、両足接地率、最大足移動量、最大roll/pitch、回復時間、トルク飽和率の集計を追加。
+- PPO基盤: `--seed`／`--target_kl`をCLI化し、`State.done`をterminated限定へ修正。
+- 着手中: Phase 0 PPO安定性診断
+- 次: GPU/WSLで固定足立位モデルをseed指定で学習し、checkpoint生成後に外乱強度別評価を実行
 
 ## 直近の判定根拠
 
-\<最後に完了・中断したTaskの結果や根拠を1〜3行で\>
+関連Pythonの構文検査、VS Codeエラー検査、立位設定・外乱設定のWSL上のassert検証、学習CLIの`--seed`／`--target_kl`確認に合格。pytestはWSL環境にも未インストール。実checkpointによる評価は未実行。
 
 ## エスカレーション中の項目
 
-\<なし、または該当項目とdocs/master\_plan.md §9.3のどの基準に該当するか\>  
+Phase 0未合格。KLスパイクと学習後半の`episode_alive`低下が未解決のため、Gate A以降は保留。`log`配下に評価用checkpointがないため、実checkpointによる診断は未実行。
 # 進捗ステータス - Phase 0 PPO安定性検証（2026-08-26～09-01）
 
 最終更新: 2026-09-01 最終更新者: Copilot
@@ -38,3 +42,21 @@ Horizon 500step統一確認、報酬clip各step±300（epoch累積ではない�
 - KLスパイク=232：初期更新で方策が大きく跳ぶ（健全域0.02-0.05未達）
 - episode_alive低下：報酬上昇と生存時間が乖離（reward hacking兆候）
 - 次の切り分け：deterministic評価、終了stepヒストグラム、報酬成分分解ログ
+
+このセッションの主な成果：
+
+✅ 実装完了
+
+PPO方策 loc soft clip + std下限/上限 クリップ（0.05-3.0）
+min/max両側の境界テスト実装・PASS
+JAX永続コンパイルキャッシュ設定
+✅ 診断完了
+
+Horizon 500step統一確認（不一致なし）
+Brax GAE/bootstrap正しく実装済み
+std下限がKL爆発の主要因（min_std=0.00283→0.05019）
+⏸️ 要分析
+
+初期KLスパイク（232）が残存
+episode_alive後半低下の詳細原因
+報酬構成とreward hackingの関係

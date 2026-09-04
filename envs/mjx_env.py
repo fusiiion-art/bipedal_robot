@@ -192,6 +192,7 @@ class SenpuuMaruMJXEnv(PipelineEnv):
             'reward_per_step': zero, 'total_penalty': zero,
             'lambda_phase': zero, 'r_cp': zero, 'r_recovery': zero,
             'r_com_stab': zero, 'pbrs_reward': zero,
+            'both_feet_contact': zero,
             'potential': zero, 'fall_penalty': zero,
             'foot_balance': zero, 'zmp_margin': zero,
             'disturbance_recovery_bonus': zero, 'stability_index': zero,
@@ -347,7 +348,9 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         
         terminated = done
         truncated = info['step'] >= RobotConfig.MAX_EPISODE_STEPS
-        done = jp.logical_or(terminated, truncated)
+        # BraxのEpisodeWrapperがtruncationを後段で付与できるよう、
+        # State.doneは真の終端だけを返す。
+        done = terminated
         info['terminated'] = terminated
         info['truncated'] = truncated
         info['time_out'] = truncated.astype(jp.float32)

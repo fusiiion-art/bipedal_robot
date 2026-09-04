@@ -32,13 +32,6 @@ except ImportError:
     print("[Warn] pyserial not found. Hardware will run in dummy mode.")
     serial = None
 
-try:
-    import spidev
-except ImportError:
-    print("[Warn] spidev not found. MCP3208 will run in dummy mode.")
-    spidev = None
-
-
 def calc_checksum(buf: bytes) -> int:
     """
     Hiwonder 公式 Checksum 計算ロジック:
@@ -157,52 +150,7 @@ class BNO055UART:
 
 
 # ============================================================
-# 2. MCP3208 SPI ADC — (SPI1 bus=1 デフォルト)
-# ============================================================
-
-class MCP3208SPI:
-    VREF = 3.3
-    
-    def __init__(self, bus: int = 1, device: int = 0, speed_hz: int = 1_000_000):
-        self.dummy_mode = spidev is None
-        self.spi = None
-        
-        if not self.dummy_mode:
-            try:
-                self.spi = spidev.SpiDev()
-                self.spi.open(bus, device)
-                self.spi.max_speed_hz = speed_hz
-                self.spi.mode = 0
-                print(f"[Info] MCP3208 initialized on SPI{bus}.{device} @ {speed_hz/1e6:.1f}MHz")
-            except Exception as e:
-                print(f"[Error] MCP3208 SPI init failed: {e}")
-                self.dummy_mode = True
-    
-    def read_channel(self, channel: int) -> int:
-        if self.dummy_mode or self.spi is None:
-            return 0
-        
-        cmd = [0x06 | (channel >> 2), (channel & 0x03) << 6, 0x00]
-        result = self.spi.xfer2(cmd)
-        return ((result[1] & 0x0F) << 8) | result[2]
-    
-    def read_all_channels(self) -> np.ndarray:
-        if self.dummy_mode:
-            return np.zeros(8)
-        
-        raw = np.array([self.read_channel(ch) for ch in range(8)], dtype=np.float32)
-        return raw / 4095.0
-    
-    def read_voltages(self) -> np.ndarray:
-        return self.read_all_channels() * self.VREF
-    
-    def close(self):
-        if self.spi:
-            self.spi.close()
-
-
-# ============================================================
-# 3. BusLinker V3.0 — Hiwonder 公式 Checksum ＆ コマンドID 準拠
+# 2. BusLinker V3.0 — Hiwonder 公式 Checksum ＆ コマンドID 準拠
 # ============================================================
 
 class BusLinkerV3:
@@ -368,7 +316,7 @@ class BusLinkerV3:
 
 
 # ============================================================
-# 4. TeensySpineIO — 脊髄MCU (Teensy 4.1) 1kHz/100Hz 連携
+# 3. TeensySpineIO — 脊髄MCU (Teensy 4.1) 1kHz/100Hz 連携
 # ============================================================
 
 class TeensySpineIO:
@@ -390,7 +338,7 @@ class TeensySpineIO:
             "gyro": np.zeros(3),
             "lin_accel": np.zeros(3)
         }
-        self.last_fsr_voltages = np.zeros(8)
+        self.last_fsr_contacts = np.zeros(8, dtype=np.float32)
         self.servo_temps = np.full(num_servos, 25.0)
         self.servo_voltages = np.full(num_servos, 11.1)
         
@@ -404,7 +352,7 @@ class TeensySpineIO:
 
     def communicate(self, target_angles_rad: np.ndarray) -> Tuple[Dict[str, np.ndarray], np.ndarray, np.ndarray, np.ndarray]:
         if self.dummy_mode or self.ser is None:
-            return self.last_imu_data, self.last_fsr_voltages, self.servo_temps, self.servo_voltages
+            return self.last_imu_data, self.last_fsr_contacts, self.servo_temps, self.servo_voltages
 
         data = bytearray([self.START_BYTE])
         for angle in target_angles_rad[:self.num_servos]:
@@ -417,7 +365,7 @@ class TeensySpineIO:
             w, x, y, z = struct.unpack('<4f', raw[1:17])
             gx, gy, gz = struct.unpack('<3f', raw[17:29])
             ax, ay, az = struct.unpack('<3f', raw[29:41])
-            fsr = np.array(struct.unpack('<8f', raw[41:73]))
+            fsr_contacts = np.rint(np.clip(np.array(struct.unpack('<8f', raw[41:73])), 0.0, 1.0))
             
             quat = np.array([w, x, y, z])
             norm = np.linalg.norm(quat)
@@ -426,9 +374,9 @@ class TeensySpineIO:
                 
             self.last_imu_data["gyro"] = np.array([gx, gy, gz])
             self.last_imu_data["lin_accel"] = np.array([ax, ay, az])
-            self.last_fsr_voltages = fsr
+            self.last_fsr_contacts = fsr_contacts.astype(np.float32)
             
-        return self.last_imu_data, self.last_fsr_voltages, self.servo_temps, self.servo_voltages
+        return self.last_imu_data, self.last_fsr_contacts, self.servo_temps, self.servo_voltages
 
     def close(self):
         if self.ser:

@@ -103,6 +103,8 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--num_minibatches", type=int, default=None)
     parser.add_argument("--num_updates_per_batch", type=int, default=4)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--target_kl", type=float, default=0.02)
     return parser.parse_args()
 
 def make_rma_network_factory(
@@ -305,13 +307,13 @@ def main():
             clipping_epsilon=0.2,           # 0.3(Braxデフォルト)→0.2に縮小
             max_grad_norm=1.0,              # 勾配クリッピングで勾配爆発を防止
             learning_rate_schedule='ADAPTIVE_KL',  # Brax内蔵Adaptive KL LR
-            desired_kl=0.02,                # ターゲットKL (20DOF高次元行動空間のためやや緩め)
+            desired_kl=args.target_kl,
             learning_rate_schedule_min_lr=1e-5,   # KL爆発時のフロア（1e-6では低すぎてLRがstuckする）
             learning_rate_schedule_max_lr=5e-4,   # KL安定時の天井
 
             num_envs=num_envs,
             batch_size=batch_size,
-            seed=42,
+            seed=args.seed,
             progress_fn=progress_callback,
             policy_params_fn=policy_params_callback
         )

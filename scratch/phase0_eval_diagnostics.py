@@ -254,6 +254,13 @@ class EpisodeResult:
     reason: str
     collapse_window: List[dict] = field(default_factory=list)
     reward_component_means: Dict[str, float] = field(default_factory=dict)
+    success: bool = False
+    both_feet_contact: bool = False
+    max_foot_displacement: float = 0.0
+    max_roll_rad: float = 0.0
+    max_pitch_rad: float = 0.0
+    recovery_time_steps: Optional[int] = None
+    torque_saturation_rate: float = 0.0
 
 
 def _lazy_imports():
@@ -352,6 +359,15 @@ def run_episode(
     history = []
     metric_sums: Dict[str, float] = {}
     metric_count = 0
+    initial_foot_positions = None
+    max_foot_displacement = 0.0
+    max_roll = 0.0
+    max_pitch = 0.0
+    both_feet_contact = True
+    recovery_start = None
+    recovery_time_steps = None
+    saturated_steps = 0
+    measured_torque_steps = 0
 
     terminated = False
     truncated = False
@@ -366,6 +382,33 @@ def run_episode(
         rpy = np.asarray(quat_to_euler(state.pipeline_state.qpos[3:7]))
         base_pos = qpos[0:3]
         base_ang_vel = qvel[3:6] if len(qvel) >= 6 else np.zeros(3)
+        xpos = np.asarray(state.pipeline_state.xpos)
+        foot_ids = ctx.get("foot_ids")
+        if foot_ids is not None and xpos.ndim == 2:
+            foot_positions = xpos[list(foot_ids)]
+            if initial_foot_positions is None:
+                initial_foot_positions = foot_positions.copy()
+            max_foot_displacement = max(
+                max_foot_displacement,
+                float(np.max(np.linalg.norm(foot_positions[:, :2] - initial_foot_positions[:, :2], axis=1))),
+            )
+        max_roll = max(max_roll, abs(float(rpy[0])))
+        max_pitch = max(max_pitch, abs(float(rpy[1])))
+        contact_metric = float(np.asarray(getattr(state, "metrics", {}).get("both_feet_contact", 0.0)))
+        both_feet_now = contact_metric >= 0.5
+        both_feet_contact = both_feet_contact and both_feet_now
+        if bool(state.info.get("was_disturbed", False)) and recovery_start is None:
+            recovery_start = step_index
+        if recovery_start is not None and recovery_time_steps is None:
+            if (both_feet_now and abs(rpy[0]) < np.deg2rad(10.0)
+                    and abs(rpy[1]) < np.deg2rad(10.0)
+                    and np.linalg.norm(base_ang_vel[:2]) < 0.5):
+                recovery_time_steps = step_index - recovery_start
+        torque = np.asarray(getattr(state.pipeline_state, "actuator_force", []))
+        if torque.size:
+            measured_torque_steps += 1
+            limit = np.asarray(ctx["torque_limit"])
+            saturated_steps += int(np.any(np.abs(torque) >= 0.98 * limit))
 
         is_fallen_roll = bool(abs(rpy[0]) > RobotConfig.TERMINATION_ROLL)
         is_fallen_pitch = bool(abs(rpy[1]) > RobotConfig.TERMINATION_PITCH)
@@ -420,6 +463,14 @@ def run_episode(
         key: value / metric_count for key, value in metric_sums.items()
     } if metric_count else {}
 
+    has_required_contact = both_feet_contact
+    success = (
+        not terminated and truncated and has_required_contact
+        and max_roll <= RobotConfig.TERMINATION_ROLL
+        and max_pitch <= RobotConfig.TERMINATION_PITCH
+        and max_foot_displacement <= RobotConfig.MAX_FOOT_TRANSLATION
+    )
+
     return EpisodeResult(
         length=step_index,
         terminated=terminated,
@@ -427,6 +478,14 @@ def run_episode(
         reason=reason,
         collapse_window=history if terminated else [],
         reward_component_means=reward_component_means,
+        success=success,
+        both_feet_contact=has_required_contact,
+        max_foot_displacement=max_foot_displacement,
+        max_roll_rad=max_roll,
+        max_pitch_rad=max_pitch,
+        recovery_time_steps=recovery_time_steps,
+        torque_saturation_rate=(saturated_steps / measured_torque_steps
+                    if measured_torque_steps else 0.0),
     )
 
 
@@ -443,6 +502,13 @@ def run_condition(
     lengths, terminated_flags, truncated_flags, reasons = [], [], [], []
     reward_component_accum: Dict[str, List[float]] = {}
     collapse_examples = []
+    successes = 0
+    foot_displacements = []
+    recovery_times = []
+    torque_saturation_rates = []
+    max_rolls = []
+    max_pitches = []
+    contact_successes = 0
 
     rng = ctx["jax"].random.PRNGKey(base_seed)
     for ep in range(n_episodes):
@@ -452,6 +518,14 @@ def run_condition(
         terminated_flags.append(result.terminated)
         truncated_flags.append(result.truncated)
         reasons.append(result.reason)
+        successes += int(result.success)
+        contact_successes += int(result.both_feet_contact)
+        foot_displacements.append(result.max_foot_displacement)
+        max_rolls.append(result.max_roll_rad)
+        max_pitches.append(result.max_pitch_rad)
+        torque_saturation_rates.append(result.torque_saturation_rate)
+        if result.recovery_time_steps is not None:
+            recovery_times.append(result.recovery_time_steps)
         for key, value in result.reward_component_means.items():
             reward_component_accum.setdefault(key, []).append(value)
         if result.terminated and len(collapse_examples) < 5:
@@ -477,6 +551,14 @@ def run_condition(
         },
         "kaplan_meier": {"times": km_times.tolist(), "survival": km_survival.tolist()},
         "failure_timing_diagnosis": timing_diag,
+        "success_rate": successes / n_episodes if n_episodes else 0.0,
+        "both_feet_contact_rate": contact_successes / n_episodes if n_episodes else 0.0,
+        "max_foot_displacement_m": float(max(foot_displacements, default=0.0)),
+        "max_roll_deg": float(np.rad2deg(max(max_rolls, default=0.0))),
+        "max_pitch_deg": float(np.rad2deg(max(max_pitches, default=0.0))),
+        "recovery_time_steps": recovery_times,
+        "recovery_time_mean_steps": float(np.mean(recovery_times)) if recovery_times else None,
+        "torque_saturation_rate_mean": float(np.mean(torque_saturation_rates)) if torque_saturation_rates else 0.0,
         "reward_component_means": {
             key: float(np.mean(vals)) for key, vals in reward_component_accum.items()
         },
@@ -497,6 +579,10 @@ def main():
     parser.add_argument("--max-steps", type=int, default=None, help="未指定ならRobotConfig.MAX_EPISODE_STEPS")
     parser.add_argument("--collapse-window", type=int, default=20)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--force-levels", default=None,
+        help="評価する外乱力[N]をカンマ区切りで指定。未指定はRobotConfig.PUSH_FORCE_LEVELS",
+    )
     parser.add_argument("--out", type=Path, default=ROOT / "log" / "phase0_eval_diagnostics.json")
     parser.add_argument(
         "--diagnosis-md", type=Path, default=ROOT / "docs" / "gate_a_diagnosis.md",
@@ -551,12 +637,20 @@ def main():
         for det in (True, False)
     }
 
+    force_levels = (
+        [float(value) for value in args.force_levels.split(",")]
+        if args.force_levels else list(RobotConfig.PUSH_FORCE_LEVELS)
+    )
     conditions = [
-        ("deterministic", "fixed_dr", True, True, args.fixed_episodes),
-        ("deterministic", "randomized_dr", True, False, args.episodes),
-        ("stochastic", "fixed_dr", False, True, args.episodes),
-        ("stochastic", "randomized_dr", False, False, args.episodes),
+        ("deterministic", "fixed_dr", True, True, args.fixed_episodes, 0.0),
+        ("deterministic", "randomized_dr", True, False, args.episodes, 0.0),
+        ("stochastic", "fixed_dr", False, True, args.episodes, 0.0),
+        ("stochastic", "randomized_dr", False, False, args.episodes, 0.0),
     ]
+    conditions.extend(
+        ("deterministic", f"push_{force:g}N", True, False, args.episodes, force)
+        for force in force_levels if force > 0.0
+    )
 
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -573,10 +667,23 @@ def main():
             "torque_okによるterminationは未実装(master_plan.md Task4 C-08未着手)。"
         ),
         "conditions": {},
+        "disturbance_model": {
+            "force_levels_N": force_levels,
+            "directions": int(RobotConfig.PUSH_DIRECTIONS),
+            "duration_steps": int(RobotConfig.PUSH_DURATION_STEPS),
+            "duration_s": float(RobotConfig.PUSH_DURATION_STEPS * RobotConfig.CONTROL_DT),
+            "impulse_levels_Ns": [
+                float(force * RobotConfig.PUSH_DURATION_STEPS * RobotConfig.CONTROL_DT)
+                for force in force_levels
+            ],
+            "implementation": "MJX random horizontal push; direction is sampled continuously",
+        },
     }
 
-    for label, dr_label, deterministic, fixed_dr, n_episodes in conditions:
+    for label, dr_label, deterministic, fixed_dr, n_episodes, push_force in conditions:
         policy_fn = policy_fns[deterministic]
+        RobotConfig.RANDOM_PUSH_MAX_FORCE = push_force
+        RobotConfig.DISTURBANCE_CURRICULUM = push_force > 0.0
         with _DomainRandomizationScope(RobotConfig, fixed=fixed_dr):
             # env.reset/step本体は `minval=RobotConfig.RANDOM_MASS_SCALE[0]` の
             # ようにRobotConfigのクラス属性をトレース時にPython定数として
@@ -593,6 +700,8 @@ def main():
             # configure→インスタンス化の順序)とも整合する対策として、
             # DR設定確定後に毎回新しいenvインスタンスを作る。
             env = SenpuuMaruMJXEnv()
+            ctx["foot_ids"] = (env._reward_system._left_foot_id, env._reward_system._right_foot_id)
+            ctx["torque_limit"] = np.asarray(env._mjx_model.actuator_ctrlrange[:, 1])
             reset_fn = ctx["jax"].jit(env.reset)
             step_fn = ctx["jax"].jit(env.step)
             result = run_condition(

@@ -3,8 +3,8 @@ from robot.config import RobotConfig
 
 class SensorFusion:
     """
-    Fuses data from BNO055 (IMU/UART) and MCP3208 (FSR/SPI) to estimate Zero-Moment Point (ZMP) 
-    and reliable ground contact flags for the Control Barrier Functions (CBF).
+    Processes simulated FSR pressure values for CoP/ZMP estimation and ground contact flags.
+    Real hardware supplies binary contact flags from the Teensy and does not use this class.
     """
     def __init__(self, fsr_positions: np.ndarray = None):
         """
