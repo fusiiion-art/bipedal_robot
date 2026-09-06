@@ -83,7 +83,7 @@ def load_checkpoint(path: Path):
         return CompatibilityUnpickler(f).load()
 
 
-def make_rma_network_factory(observation_size: int, action_size: int, preprocess_observations_fn=lambda x, _=None: x):
+def make_policy_network_factory(observation_size: int, action_size: int, preprocess_observations_fn=lambda x, _=None: x):
     return ppo_networks.make_ppo_networks(
         observation_size=observation_size,
         action_size=action_size,
@@ -94,7 +94,7 @@ def make_rma_network_factory(observation_size: int, action_size: int, preprocess
 
 
 def build_inference_fn(params, env):
-    ppo_network = make_rma_network_factory(env.observation_size, env.action_size)
+    ppo_network = make_policy_network_factory(env.observation_size, env.action_size)
     inference_fn = ppo_networks.make_inference_fn(ppo_network)
     
     # Strip leading pmap dimension from params (tuple: running_stats, policy_params, value_params)

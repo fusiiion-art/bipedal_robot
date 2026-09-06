@@ -17,7 +17,7 @@ from brax.training.agents.ppo import networks as ppo_networks
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from robot.config import RobotConfig
 from envs.mjx_env import SenpuuMaruMJXEnv  # noqa: F401
-from train.train_mjx import make_rma_network_factory
+from train.train_mjx import make_policy_network_factory
 
 def main():
     parser = argparse.ArgumentParser()
@@ -37,7 +37,7 @@ def main():
     jax.config.update('jax_platform_name', 'cpu')
     env = envs.get_environment('senpuu_maru_mjx')
     
-    ppo_network = make_rma_network_factory(observation_size=env.observation_size, action_size=env.action_size)
+    ppo_network = make_policy_network_factory(observation_size=env.observation_size, action_size=env.action_size)
     make_policy = ppo_networks.make_inference_fn(ppo_network)
     
     normalizer_params, policy_params, value_params = params

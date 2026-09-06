@@ -3,20 +3,15 @@ real/real_env.py — RPi5 実機メインループ & 観測ベクトル構築
 
 【実装済み対策 (フィージビリティレビュー反映)】
 - ONNX Runtime: シングルスレッド強制 (レイテンシスパイク防止)
-- 共有メモリ: atexit + signal + try...finally の3重防御
 - 制御周期: 100Hz対応 (dt=10ms, time.monotonic精密タイマー)
 - 観測ベクトル: project_overview.md の625次元仕様に完全準拠
 """
 
 import os
 import time
-import signal
-import atexit
-import struct
 import numpy as np
 from typing import Dict, Any, Optional
 from collections import deque
-from multiprocessing import shared_memory
 
 try:
     import onnxruntime as ort
@@ -32,65 +27,6 @@ from robot.gait_generator import numpy_get_reference_trajectory
 
 # ============================================================
 # 共有メモリ管理 (3重防御でリーク防止)
-# ============================================================
-
-class SharedMemoryManager:
-    """
-    POSIX共有メモリの安全なライフサイクル管理。
-    
-    【問題】クラッシュ時にPythonの__del__は呼ばれない→/dev/shm にゾンビが残る
-    【対策】atexit + signal + systemd ExecStopPost の3重防御
-    """
-    
-    def __init__(self):
-        self._blocks: list = []
-    
-    def create(self, name: str, size: int) -> shared_memory.SharedMemory:
-        """共有メモリブロックを作成し、自動クリーンアップを登録"""
-        # 既存のゾンビブロックがあれば先に削除
-        try:
-            old = shared_memory.SharedMemory(name=name, create=False)
-            old.close()
-            old.unlink()
-        except FileNotFoundError:
-            pass
-        
-        shm = shared_memory.SharedMemory(name=name, create=True, size=size)
-        self._blocks.append(shm)
-        return shm
-    
-    def attach(self, name: str) -> shared_memory.SharedMemory:
-        """既存ブロックにアタッチ (RMAワーカー用)"""
-        shm = shared_memory.SharedMemory(name=name, create=False)
-        self._blocks.append(shm)
-        return shm
-    
-    def cleanup(self):
-        """全ブロックを安全に解放"""
-        for shm in self._blocks:
-            try:
-                shm.close()
-            except Exception:
-                pass
-            try:
-                shm.unlink()
-            except Exception:
-                pass
-        self._blocks.clear()
-        print("[Info] Shared memory cleaned up.")
-    
-    def register_signal_handlers(self):
-        """SIGTERM/SIGINT でもクリーンアップを保証"""
-        atexit.register(self.cleanup)
-        
-        def _handler(signum, frame):
-            self.cleanup()
-            raise SystemExit(0)
-        
-        signal.signal(signal.SIGTERM, _handler)
-        signal.signal(signal.SIGINT, _handler)
-
-
 # ============================================================
 # ONNX推論ラッパー (シングルスレッド設定)
 # ============================================================
@@ -170,9 +106,8 @@ class RealRobotEnv:
     HISTORY_LEN = 5
     ACT_DIM = 20
     OBS_DIM = 625        # BASE_OBS + HISTORY(520) + TEMP(20) + VOLT(1)
-    ACTION_SCALE = np.deg2rad(90)
+    ACTION_SCALE = RobotConfig.ACTION_SCALE
     RESIDUAL_SCALE = 0.5
-    GAIT_PERIOD = 1.0
     EMA_ALPHA = 0.8      # LPF平滑化係数
     
     # 各関節の物理的可動限界 (assets/humanoid/humanoid.xml と 100% 完全同期)
@@ -208,14 +143,6 @@ class RealRobotEnv:
             self.spine.communicate(np.zeros(self.NUM_JOINTS))
         )
         
-        # --- 共有メモリ管理 (3重防御) ---
-        self.shm_manager = SharedMemoryManager()
-        self.shm_manager.register_signal_handlers()
-        
-        # RMA適応器との共有メモリ: 8次元 latent vector (float32 × 8 = 32 bytes)
-        self.shm_latent = self.shm_manager.create("robot_rma_latent", 4 * 8)
-        self.latent_vector = np.zeros(8, dtype=np.float32)
-        
         # --- ONNX推論 (シングルスレッド) ---
         self.policy = PolicyRunner()
         
@@ -243,9 +170,11 @@ class RealRobotEnv:
         print(f"[Info] RealRobotEnv ready. Control loop: {control_hz}Hz ({self.dt*1000:.1f}ms)")
     
     def _compute_gait_phase(self) -> float:
-        """現在の歩行位相 [0, 1) を計算"""
+        """学習時と同じ位相観測を返す。固定足モードでは常に0。"""
+        if not RobotConfig.USE_REFERENCE_GAIT:
+            return 0.0
         t = time.monotonic() - self.start_time
-        return (t % self.GAIT_PERIOD) / self.GAIT_PERIOD
+        return (t % RobotConfig.GAIT_PERIOD) / RobotConfig.GAIT_PERIOD
     
     def _get_reference_trajectory(self, phase: float) -> np.ndarray:
         """
@@ -414,12 +343,7 @@ class RealRobotEnv:
                     self.spine.communicate(action)
                 )
                 
-                # 4. RMA latent を共有メモリから読み取り (非同期更新)
-                self.latent_vector[:] = np.frombuffer(
-                    self.shm_latent.buf[:32], dtype=np.float32
-                )
-                
-                # 6. ループタイミング制御
+                # 4. ループタイミング制御
                 elapsed = time.monotonic() - t_start
                 sleep_time = self.dt - elapsed
                 if sleep_time > 0:
@@ -443,7 +367,6 @@ class RealRobotEnv:
         time.sleep(0.5)
         
         self.spine.close()
-        self.shm_manager.cleanup()
         print("[Info] Shutdown complete.")
 
 

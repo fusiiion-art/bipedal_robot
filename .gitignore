@@ -13,7 +13,7 @@ build/
 *.egg
 
 # --- Virtual environments ---
-venv/
+venv312/
 venv_wsl/
 .venv/
 

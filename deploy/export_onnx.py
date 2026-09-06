@@ -13,7 +13,7 @@ from brax.training.agents.ppo import networks as ppo_networks
 # append project root to sys path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from robot.config import RobotConfig
-from train.train_mjx import make_rma_network_factory
+from train.train_mjx import make_policy_network_factory
 
 def load_brax_inference_fn(pkl_path, obs_dim, action_dim):
     """
@@ -26,7 +26,7 @@ def load_brax_inference_fn(pkl_path, obs_dim, action_dim):
     print("[INFO] Params successfully loaded from pickle.")
     
     # train_mjx.py と同一のネットワーク構成を使用（アーキテクチャ不一致を防止）
-    ppo_network = make_rma_network_factory(
+    ppo_network = make_policy_network_factory(
         observation_size=obs_dim,
         action_size=action_dim,
     )

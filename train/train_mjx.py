@@ -87,7 +87,6 @@ ppo_networks.make_inference_fn = _safe_make_inference_fn
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from robot.config import RobotConfig
-from train.networks import AdaptationModule, BasePolicy, TeacherPolicy
 from envs.mjx_env import SenpuuMaruMJXEnv  # noqa: F401 (Brax環境登録のため)
 from envs.training_wrapper import TrainingProgressWrapper
 
@@ -107,13 +106,13 @@ def parse_args():
     parser.add_argument("--target_kl", type=float, default=0.02)
     return parser.parse_args()
 
-def make_rma_network_factory(
+def make_policy_network_factory(
     observation_size: int,
     action_size: int,
     preprocess_observations_fn=lambda x, _=None: x,
 ):
     """
-    RMA Architecture Network Factory:
+    Standard PPO network factory for the fixed-foot standing policy.
     
     観測空間の構成 (OBS_DIM):
       - Base Obs (現在の状態)
@@ -121,11 +120,8 @@ def make_rma_network_factory(
       - Servo Temperature (各関節の温度)
       - Supply Voltage (電源電圧)
       
-    学習フェーズ1: Teacher Policy (特権情報あり) で学習
-    学習フェーズ2: Adaptation Module で特権情報を履歴から推定する蒸留
-    デプロイ: Base Policy + Adaptation Module (Teacher不要)
-    
-    現在はBrax PPOの標準MLPを拡張OBS_DIMに合わせて使用。
+    The observation already contains measured-sensor equivalents and their
+    short history; no privileged teacher or adaptation network is used.
     """
     return ppo_networks.make_ppo_networks(
         observation_size=observation_size,
@@ -289,7 +285,7 @@ def main():
     try:
         make_inference_fn, params, metrics = ppo.train(
             environment=env,
-            network_factory=make_rma_network_factory,
+            network_factory=make_policy_network_factory,
             num_timesteps=steps,
             num_evals=num_evals,
             reward_scaling=0.01,  # 報酬クリップ後の値をPPOの更新量に合わせる

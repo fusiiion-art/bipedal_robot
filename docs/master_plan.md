@@ -22,7 +22,7 @@
 - Gate 0-P（物理ベースライン、非公式）: 純MuJoCoフォールバックで10秒・seed=0、max\_roll=2.155°、max\_pitch=0.340°、両足接地率1.0、トルク飽和率0。**これは学習済みRLポリシーの正式なGate 0合格ではない**（4章参照）  
 - `time_out`フィールドの配線: Brax本体の要求仕様(`state.info['time_out']`\+`done=True`)と一致していることをソースコードで確認済み  
 - `mean_clip_scale`と`std`上限クリップ(3.0)は実装・検証済みで、実際のGPU学習でも`max_loc=2.694`, `max_std=2.995`と設計通りに機能している  
-- `train/networks.py`の`AdaptationModule`/`BasePolicy`/`TeacherPolicy`（RMAアーキテクチャ）は現在の学習に一切使われていない（importされているだけの死んだコード）。Gate A合格まで着手しない  
+- RMAのTeacher/Adaptation/Base構成は現行の固定足立位学習から廃止した。現在は実測センサー相当の観測と履歴を入力する標準PPO MLPを使用し、RMA再導入は別設計・別検証の課題とする
 - `bootstrap_on_timeout`が使う値は`V(s_T)`（打ち切り時点の状態）ではなく、Brax実装上**1ステップ前の`V(s_{T-1})`**（`policy_extras['value']`、遷移前の観測から計算）である。auto-resetによる観測汚染の心配はこの経路には無い（ソース確認済み、2026-08-27）。ただし標準の`truncation`ベースのGAE経路は別途タスク2の修正が必要
 
 ### 未解決・最優先（2章で詳細）

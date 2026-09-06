@@ -273,7 +273,7 @@ def _lazy_imports():
     from train.visualize_rl import (
         get_model_path,
         load_checkpoint,
-        make_rma_network_factory,
+        make_policy_network_factory,
     )
     from brax.training.agents.ppo import networks as ppo_networks
 
@@ -285,7 +285,7 @@ def _lazy_imports():
         "quat_to_euler": quat_to_euler,
         "get_model_path": get_model_path,
         "load_checkpoint": load_checkpoint,
-        "make_rma_network_factory": make_rma_network_factory,
+        "make_policy_network_factory": make_policy_network_factory,
         "ppo_networks": ppo_networks,
     }
 
@@ -621,7 +621,7 @@ def main():
     # obs/action次元はDR設定に依存しないstructuralな値なので、使い捨てのenv
     # インスタンスから一度だけ取得すれば十分(policy networkの構築もここでよい)。
     _probe_env = SenpuuMaruMJXEnv()
-    network = ctx["make_rma_network_factory"](_probe_env.observation_size, _probe_env.action_size)
+    network = ctx["make_policy_network_factory"](_probe_env.observation_size, _probe_env.action_size)
     make_policy = ppo_networks.make_inference_fn(network)
 
     def strip_leading_dim(leaf):
