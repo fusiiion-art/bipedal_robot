@@ -186,6 +186,12 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         
         obs, info = self._get_obs(mjx_data, info, rng_noise)
         
+        # [FIX 4-bis] reset() でも観測次元をアサート検証
+        assert obs.shape[0] == RobotConfig.OBS_DIM, (
+            f"Observation shape mismatch at reset(): computed {obs.shape[0]}, "
+            f"but RobotConfig.OBS_DIM is {RobotConfig.OBS_DIM}."
+        )
+        
         reward, done, zero = jp.zeros(3)
         metrics = {
             'alive': zero, 'total_reward': zero, 'reward': zero,
@@ -362,6 +368,17 @@ class SenpuuMaruMJXEnv(PipelineEnv):
                              done=done.astype(jp.float32), metrics=metrics, info=info)
 
     def _get_obs(self, data: mjx.Data, info: Dict[str, Any], rng: jax.Array) -> Tuple[jax.Array, Dict[str, Any]]:
+        # [ISSUE-1 FIXED] com_pos を subtree_com から優先取得（Option B統一）
+        subtree_com = getattr(data, 'subtree_com', None)
+        if subtree_com is not None:
+            com_pos = subtree_com[0]
+        else:
+            # フォールバック: free joint の胴体位置
+            if self._mjx_model.nq >= 7:
+                com_pos = data.qpos[0:3]
+            else:
+                com_pos = jp.zeros(3)
+        
         if self._mjx_model.nq >= 7:
             base_pos = data.qpos[0:3]
             base_quat = data.qpos[3:7]

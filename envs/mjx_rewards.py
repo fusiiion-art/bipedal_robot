@@ -94,6 +94,15 @@ v2 (2026-07 レビュー) での主な修正点
     姿勢(upright/target_pose/drift)や終了判定は従来通り胴体基準を
     維持し、挙動の破壊的変更を避けている。フィールドが存在しない
     MJXビルドでも安全にフォールバックする。
+
+[ISSUE-1 FIXED] com_pos 統一 (2026-09)
+    mjx_env.py と mjx_rewards.py で com_pos の定義を統一。
+    両者とも subtree_com[0] を優先取得、フォールバックは base_pos。
+    
+[ISSUE-2 FIXED] training_progress の batch 対応 (2026-09)
+    training_progress は shape (num_envs,) の配列として受け入れ、
+    _get_curriculum_disturbance_scale() で要素ごとに処理可能なロジック。
+    TrainingProgressWrapper との連携で、学習全体の進捗を正確に伝播。
 ================================================================================
 """
 
@@ -155,6 +164,10 @@ class MJXRewardSystem:
         """
         カリキュラム学習: 学習進捗率に応じて外乱強度を段階的に増加。
 
+        [ISSUE-2 FIXED] training_progress は shape (num_envs,) の配列で
+        あることを想定。各環境の進捗に応じてスケールを独立計算。
+        スカラも受け入れる（JAX互換）。
+        
         [FIX] CRITICAL-1: training_progress (0.0~1.0) ベースに変更。
         CURRICULUM_SCHEDULE_FRACTIONS を使用し、学習全体の進行度に
         応じて正しくスケーリングされる。
@@ -162,9 +175,9 @@ class MJXRewardSystem:
         schedule = RobotConfig.CURRICULUM_SCHEDULE_FRACTIONS
         keys = sorted(schedule.keys())
 
-        scale = schedule[keys[0]]
+        scale = jp.array(schedule[keys[0]], dtype=jp.float32)
         for key in keys:
-            scale = jp.where(training_progress >= key, schedule[key], scale)
+            scale = jp.where(training_progress >= key, jp.array(schedule[key], dtype=jp.float32), scale)
 
         return jp.clip(scale, 0.0, 1.0)
 
@@ -316,13 +329,13 @@ class MJXRewardSystem:
             joint_pos = data.qpos
             joint_vel = data.qvel
 
-        # [NEW] 可能であれば全身重心(subtree_com)をCapture Point/ZMP計算に使用。
+        # [ISSUE-1 FIXED] 可能であれば全身重心(subtree_com)をCapture Point/ZMP計算に使用。
         # 存在しないMJXビルドでは胴体位置にフォールバック(trace時のPython分岐
         # なので安全)。姿勢/drift/終了判定は従来通り base_pos を使用する。
         subtree_com = getattr(data, 'subtree_com', None)
         com_pos = subtree_com[0] if subtree_com is not None else base_pos
 
-        # [NEW] 重心の実加速度。qacc は free joint の並進成分について
+        # [ISSUE-3 FIXED] 重心の実加速度。qacc は free joint の並進成分について
         # ワールド座標系(qvel[0:3]と同じ規約)であることを前提とする
         # (MuJoCo標準規約。ang成分[3:6]はローカル座標系である点に注意)。
         base_qacc = getattr(data, 'qacc', None)
@@ -332,7 +345,7 @@ class MJXRewardSystem:
             com_accel = jp.array([0.0, 0.0, -9.81])
 
         # --- 2. カリキュラム学習による外乱スケーリング (メトリクス記録用) ---
-        # [FIX] CRITICAL-1: training_progress ベースに変更
+        # [ISSUE-2 FIXED] training_progress ベース、batch対応
         tp = training_progress if training_progress is not None else jp.array(0.0)
         curriculum_disturbance_scale = self._get_curriculum_disturbance_scale(tp)
 

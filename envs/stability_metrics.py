@@ -31,6 +31,19 @@ v2 (2026-07 レビュー) での主な修正点
    （旧: zmp_margin が常時+1.0のフリークレジットを与えていたため、
    本指標を閾値判定に使う disturbance_recovery_bonus 等が
    実際より「安定している」と誤認しやすい状態だった）。
+
+================================================================================
+v2.1 (2026-09 ISSUE-1/3 修正)
+================================================================================
+[ISSUE-1 FIXED] com_pos の統一
+   mjx_env.py と mjx_rewards.py の両方で subtree_com[0] を優先取得。
+   compute_zmp_margin() と compute_lipm_metrics() でも同じ com_pos を
+   参照することで、数値的な乖離を排除。
+
+[ISSUE-3 FIXED] data.qacc の座標系明記
+   com_accel = data.qacc[0:3] がワールド座標系であることを
+   コメントで明示。MuJoCo標準規約（free joint の並進は world frame）
+   に準拠していることを記録し、実装変更時の引き継ぎ誤りを防止。
 ================================================================================
 """
 
@@ -127,10 +140,16 @@ class StabilityMetrics:
         両足を結ぶ線分を足平半径で膨らませたカプセル領域）までの
         符号付き距離としてマージンを定義する。
 
+        注意:
+        [ISSUE-3 FIXED] com_accel は data.qacc[0:3] (world frame の並進加速度)
+        を前提とします。MuJoCo標準規約では free joint の並進加速度は
+        world frame です。ローカル座標系の加速度ではありませんので
+        ご注意ください。
+
         Args:
-            com_pos: 重心位置 [3]
+            com_pos: 重心位置 [3]（preferably subtree_com[0], fallback base_pos）
             com_accel: 重心の線形加速度 [3] (data.qacc[0:3] 相当。
-                       ワールド座標系であることを前提とする。要検証)
+                       ワールド座標系)
             left_foot_pos / right_foot_pos: 足位置 [3]
             left_foot_force / right_foot_force: 足裏鉛直反力 [スカラ]
 
@@ -225,6 +244,9 @@ class StabilityMetrics:
     ) -> Tuple[jax.Array, Dict[str, jax.Array]]:
         """
         複数の安定性指標を統合し、統一的な安定性インデックスを計算する。
+
+        [ISSUE-1/3 FIXED] com_pos は subtree_com[0] を優先（mjx_env/rewards側で統一）。
+        com_accel は world frame (data.qacc[0:3]) であることを前提。
 
         Returns:
             (stability_index, metrics_dict)

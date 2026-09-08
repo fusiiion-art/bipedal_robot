@@ -23,6 +23,10 @@ class HX30HMModel:
     - No-load Speed: 0.19 sec/60deg (11.1V) = 315 deg/s = 5.5 rad/s
     - Operating Voltage: 6.0 ~ 12.6V
     - Operating Temperature: -5℃ ~ 85℃
+    
+    参考: 実機キャリブレーション
+    - motor_resistance, thermal_mass, thermal_resistance は概算値。
+    - 実装環境の温度条件に合わせて AMBIENT_TEMP を調整してください。
     """
     
     # 定格電圧
@@ -80,6 +84,9 @@ class HX30HMModel:
           P_heat = torque^2 * R_motor / efficiency  (銅損の概算)
           P_cool = (T - T_ambient) / R_thermal      (放熱)
         
+        注意: motor_resistance は概算値(2.0Ω)です。
+              実機測定値がある場合、適切に調整してください。
+        
         Args:
             state: 現在のアクチュエータ状態
             torque: 各関節のトルク [N.m] shape=(nu,)
@@ -89,7 +96,7 @@ class HX30HMModel:
             new_state: 温度が更新された新しい状態
         """
         # 発熱量 (I^2 * R に相当、トルクの2乗に比例)
-        motor_resistance = 2.0  # [Ω] 概算のモータ巻線抵抗
+        motor_resistance = 2.0  # [Ω] 概算のモータ巻線抵抗（実測値で更新推奨）
         power_heat = jp.square(torque) * motor_resistance / HX30HMModel.MOTOR_EFFICIENCY
         
         # 放熱量
