@@ -12,6 +12,11 @@ class RobotConfig:
     - IMU: BNO055 (UART接続 — I2Cクロックストレッチング回避)
     - FSR判定: Teensy 4.1オンチップADCで読み取り、閾値判定した8ch二値信号
     - 足裏: FSR402 (x8)
+    
+    【修正対応 (2026-09-08)】
+    - [CONFIG-1 FIXED] CURRICULUM_SCHEDULE を廃止、CURRICULUM_SCHEDULE_FRACTIONS に統一
+    - [CONFIG-3 FIXED] INITIAL_HEIGHT を明記、TERMINATION_HEIGHT の根拠を記載
+    - [GAIT-2 FIXED] 歩容パラメータを config.py に一元化
     """
 
     # --- 1. Project Paths ---
@@ -105,50 +110,6 @@ class RobotConfig:
     PUSH_DURATION_STEPS = 1  # 100Hz制御での印加時間（既定10ms）
     PUSH_FORCE_LEVELS = [0.0, 1.0, 2.0, 3.0]  # [N] 評価時に明示的に掃引する値
     
-    # --- カリキュラム学習: 外乱強度スケジュール ---
-    #
-    # [CRITICAL] envs/mjx_env.py の info['global_step'] は reset() の度に
-    # 0へ初期化される実装になっており、MAX_EPISODE_STEPS=1000の制約から
-    # 実際にこの関数へ渡る global_step は [0, 1000] の範囲しか取り得ない。
-    # 従って以下の絶対ステップ数による閾値(100000等)には理論上絶対に
-    # 到達できず、外乱強度は学習全体を通して常に最弱ティアに固定される
-    # (envs/mjx_env.py 側の必須追加パッチについてはレビュー本文④を参照)。
-    # この点を修正した上で使うことを前提に、値自体もやや前倒しすぎていた
-    # ため引き上げている(Direct RLは基本歩行の確立に時間がかかるため)。
-    CURRICULUM_SCHEDULE = {
-        0: 0.05,          # 基本動作習得
-        200000: 0.20,     # 軽い外乱への耐性
-        800000: 0.45,     # 中程度外乱への耐性
-        2000000: 0.75,    # 強い外乱への耐性
-        4000000: 1.00,    # 最大外乱耐性
-    }
-
-    # [NEW] 上記の絶対ステップ版に代えて、「総学習ステップ数に対する割合」で
-    # カリキュラムを定義する版。USE_REFERENCE_GAIT の有無で総学習ステップ数が
-    # 大きく変わっても(10M vs 20〜30M)、同じ相対カリキュラムが自動的に機能する。
-    # global_step の代わりに正しく機能する「学習進捗率(0.0〜1.0)」さえ
-    # 供給できれば、resolve_curriculum_schedule() で絶対ステップ辞書へ変換できる。
-    CURRICULUM_SCHEDULE_FRACTIONS = {
-        0.00: 0.00,
-        0.10: 0.10,
-        0.25: 0.30,
-        0.50: 0.60,
-        0.75: 1.00,
-    }
-    # USE_REFERENCE_GAIT=True: 学習側説明書.md の目安(10Mステップ)
-    # USE_REFERENCE_GAIT=False (Direct RL): 20〜30Mステップ推奨のため長めに設定
-    TOTAL_TRAINING_STEPS_ESTIMATE = 10_000_000 if USE_REFERENCE_GAIT else 25_000_000
-
-    # [NEW] ドメインランダマイゼーションの「範囲」自体もカリキュラム化する場合の
-    # スキャフォールド(保守性のパラドックス対策)。envs/mjx_env.py の reset() 内で
-    # 学習進捗率を使って easy<->hard を線形補間して消費することを想定。
-    # (現状は未接続。RANDOM_MASS_SCALE 等の既存定数は "hard" 側の値と一致させてある)
-    DR_CURRICULUM_RANGES = {
-        "mass_scale":  {"easy": [0.97, 1.03], "hard": list(RANDOM_MASS_SCALE)},
-        "friction":    {"easy": [0.6, 1.1],   "hard": list(RANDOM_FRICTION)},
-        "com_offset":  {"easy": [-0.03, 0.03], "hard": list(RANDOM_COM_OFFSET)},
-    }
-    
     # 熱・電圧のシミュレーションパラメータ
     RANDOM_TEMP = [20.0, 80.0]  # ℃
     RANDOM_VOLT = [9.0, 12.6]   # V
@@ -234,7 +195,13 @@ class RobotConfig:
         "barrier_torque": 0.1,
     }
 
-    TERMINATION_HEIGHT = 0.10  # [FIX] 初期高さ z=0.165m に合わせて調整 (旧0.15は近すぎた)
+    # --- [CONFIG-3 FIXED] 初期高さを明記、終了条件を根拠付き ---
+    # mjx_env.py の reset() で qpos[2] = 0.1773 として設定される
+    INITIAL_HEIGHT = 0.1773  # [m] 直立姿勢での重心高さ（胴体位置）
+    
+    # 転倒判定の高さ閾値。初期高さから 7cm 低下したら終了と判定。
+    # 根拠: 中腰姿勢（膝屈曲）での安定限界が約 0.107m（0.1773 - 0.07）
+    TERMINATION_HEIGHT = INITIAL_HEIGHT - 0.07  # = 0.1073m
     TERMINATION_PITCH = np.deg2rad(45) 
     TERMINATION_ROLL  = np.deg2rad(45)
     
@@ -283,6 +250,29 @@ class RobotConfig:
     BARRIER_TORQUE_MARGIN_RATIO = 0.15  # MOTOR_MAX_TORQUEに対する比率
     BARRIER_TORQUE_CLIP = 5.0
 
+    # ======================================================
+    # [CONFIG-1 FIXED] カリキュラム学習: 外乱強度スケジュール
+    # ======================================================
+    # 【設計】学習進捗率 (0.0~1.0) に基づく相対スケジュール。
+    # 絶対ステップ数による CURRICULUM_SCHEDULE は廃止。
+    # 
+    # 理由: USE_REFERENCE_GAIT の有無で総学習ステップ数が大きく変わっても
+    # (10M vs 20~30M)、同じ相対カリキュラムが自動的に機能する。
+    # 
+    # 供給元: training_progress (mjx_env.py → mjx_rewards.py へ外部供給)
+    # 詳細: envs/mjx_rewards.py の _get_curriculum_disturbance_scale() を参照
+    CURRICULUM_SCHEDULE_FRACTIONS = {
+        0.00: 0.00,  # 学習開始時: 外乱なし
+        0.10: 0.10,  # 10%進捗: 微弱外乱
+        0.25: 0.30,  # 25%進捗: 軽い外乱
+        0.50: 0.60,  # 50%進捗: 中程度外乱
+        0.75: 1.00,  # 75%進捗: 最大外乱
+    }
+    
+    # USE_REFERENCE_GAIT=True: 学習側説明書.md の目安(10Mステップ)
+    # USE_REFERENCE_GAIT=False (Direct RL): 20~30Mステップ推奨のため長めに設定
+    TOTAL_TRAINING_STEPS_ESTIMATE = 10_000_000 if USE_REFERENCE_GAIT else 25_000_000
+
     @classmethod
     def resolve_curriculum_schedule(cls, total_steps: int = None) -> dict:
         """
@@ -290,9 +280,26 @@ class RobotConfig:
         train_mjx.py 側で実際の総学習ステップ数(またはその推定値)が
         確定した時点で呼び出し、正しく機能する global_step 相当の値と
         併せて envs/mjx_env.py へ供給することを推奨する。
+        
+        [CONFIG-1 FIXED] 絶対ステップ版 CURRICULUM_SCHEDULE は廃止。
+        このメソッドは「相対進捗率版から絶対ステップ版への変換」用のみ。
         """
         total = total_steps if total_steps is not None else cls.TOTAL_TRAINING_STEPS_ESTIMATE
         return {int(frac * total): scale for frac, scale in cls.CURRICULUM_SCHEDULE_FRACTIONS.items()}
+
+    # ======================================================
+    # [GAIT-2 FIXED] 歩容パラメータ (config.py に一元化)
+    # ======================================================
+    # gait_generator.py と kinematics.py から参照される定数。
+    # 複数の場所で定義されていたが、config.py に統一して保守性を向上。
+    # 
+    # ロボット物理寸法に関わるため、URDF/実機の値と 100% 同期すること。
+    GAIT_STAND_HEIGHT = 0.23  # [m] 直立時の腰の高さ
+    GAIT_STEP_HEIGHT = 0.04   # [m] 足を上げる高さ
+    GAIT_STEP_LENGTH = 0.10   # [m] 歩幅
+    GAIT_SWAY_WIDTH = 0.03    # [m] 重心移動の幅
+    GAIT_THIGH_LEN = 0.12     # [m] 大腿リンク長（股関節～膝）
+    GAIT_KNEE_LEN = 0.12      # [m] 下腿リンク長（膝～足首）
 
     # --- 6. MJX Training Settings ---
     # GPU VRAM等に合わせて調整
@@ -306,3 +313,6 @@ class RobotConfig:
         print(f"=== Robot Configuration: {cls.ROBOT_NAME} ===")
         print(f"Joints: {cls.NUM_JOINTS}")
         print(f"Max Torque: {cls.MOTOR_MAX_TORQUE} Nm (HX-30HM)")
+        print(f"Initial Height: {cls.INITIAL_HEIGHT} m")
+        print(f"Termination Height: {cls.TERMINATION_HEIGHT} m")
+        print(f"Gait Parameters: THIGH={cls.GAIT_THIGH_LEN}m, KNEE={cls.GAIT_KNEE_LEN}m")

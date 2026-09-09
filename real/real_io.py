@@ -17,6 +17,10 @@ real/real_io.py — ハードウェアI/Oドライバ (RPi5 & Teensy 4.1 脳脊�
    - バス2: 左脚 6軸 (ID: 7~12)
    - バス3: 右腕 4軸 (ID: 13~16)
    - バス4: 左腕 4軸 (ID: 17~20)
+
+【修正対応 (2026-09-08)】
+- [REAL-4 FIXED] Checksum 検証を厳格化（破損データ読み出し防止）
+- [REAL-5 FIXED] Teensy E-stop タイムアウト仕組みを明示・整合
 """
 
 import os
@@ -273,6 +277,10 @@ class BusLinkerV3:
     def _read_servo_register(self, servo_id: int, cmd: int) -> Optional[int]:
         """
         公式 Checksum 計算付きサーボレジスタ読み出し (半二重通信)
+        
+        [REAL-4 FIXED] Checksum 検証を厳格化。
+        応答パケットの Checksum が一致しない場合は None を返す。
+        パケット長の確認のみでは不十分（破損データを通す危険）。
         """
         if self.ser is None:
             return None
@@ -291,22 +299,40 @@ class BusLinkerV3:
             
             # 応答受領: Header(2) + ID(1) + Len(1) + Cmd(1) + Data + Checksum(1)
             response = self.ser.read(8)
-            if len(response) >= 7 and response[0:2] == self.HEADER:
-                rx_id = response[2]
-                rx_len = response[3]
-                rx_cmd = response[4]
-                
-                # Checksum 検証
-                rx_chk = response[3 + rx_len] if len(response) > 3 + rx_len else 0
-                calc_chk = calc_checksum(response[2:3+rx_len])
-                
-                if rx_chk == calc_chk or len(response) >= 7:
-                    if cmd == self.CMD_SERVO_TEMP_READ:
-                        return response[5]
-                    elif cmd == self.CMD_SERVO_VIN_READ:
-                        return struct.unpack('<H', response[5:7])[0]
-                    elif cmd == self.CMD_SERVO_POS_READ:
-                        return struct.unpack('<h', response[5:7])[0]
+            if len(response) < 7:
+                # [REAL-4 FIXED] パケット長不足でログ出力
+                if len(response) > 0:
+                    print(f"[Warn] Incomplete response from servo {servo_id}: {len(response)} bytes")
+                return None
+            
+            if response[0:2] != self.HEADER:
+                print(f"[Warn] Invalid header from servo {servo_id}")
+                return None
+            
+            rx_id = response[2]
+            rx_len = response[3]
+            rx_cmd = response[4]
+            
+            # [REAL-4 FIXED] Checksum 検証を厳格化
+            if len(response) <= 3 + rx_len:
+                print(f"[Warn] Response too short for checksum validation from servo {servo_id}")
+                return None
+            
+            rx_chk = response[3 + rx_len]
+            calc_chk = calc_checksum(response[2:3+rx_len])
+            
+            if rx_chk != calc_chk:
+                print(f"[Warn] Checksum mismatch for servo {servo_id}: "
+                      f"expected {calc_chk:02x}, got {rx_chk:02x}")
+                return None
+            
+            # データ抽出 (Checksum が一致した場合のみ)
+            if cmd == self.CMD_SERVO_TEMP_READ:
+                return response[5]
+            elif cmd == self.CMD_SERVO_VIN_READ:
+                return struct.unpack('<H', response[5:7])[0]
+            elif cmd == self.CMD_SERVO_POS_READ:
+                return struct.unpack('<h', response[5:7])[0]
         
         return None
     
@@ -322,7 +348,23 @@ class BusLinkerV3:
 class TeensySpineIO:
     """
     Teensy 4.1 (脊髄MCU) との USB Serial パケット通信ドライバ。
-    30ms 通信無応答時に Teensy 側で 1kHz E-stop 自律発報。
+    
+    [REAL-5 FIXED] 通信タイムアウト仕組みを明示。
+    
+    RPi 側タイムアウト: 5ms (timeout=0.005)
+    Teensy 側 E-stop トリガ: 30ms 無応答
+    
+    【仕組み説明】
+    1. RPi から Teensy へ制御パケット送信 (毎ステップ = 10ms周期)
+    2. Teensy が応答パケット返却 (通常 < 1ms)
+    3. RPi が応答を 5ms タイムアウトで受信
+    4. Teensy は最後に有効な通信時刻を記録
+    5. 通信から 30ms 経過しても新しい通信がない場合、
+       Teensy 側の 1kHz ハードウェアタイマが自動的に
+       全サーボをゼロトルク にしてロボットを安全にドロップさせる
+    
+    RPi のアプリケーション層は 5ms タイムアウトで通信エラーに気付き、
+    E-stop 処理を開始できる（30ms 前に検知可能）。
     """
     START_BYTE = 0xA5
     
@@ -342,10 +384,17 @@ class TeensySpineIO:
         self.servo_temps = np.full(num_servos, 25.0)
         self.servo_voltages = np.full(num_servos, 11.1)
         
+        self.telemetry_timeout_flag = False  # 上位ループへの異常通知用フラグ
+        self._consecutive_timeouts = 0       # 連続タイムアウト回数
+        
         if not self.dummy_mode:
             try:
+                # [REAL-5 FIXED] RPi 側タイムアウト = 5ms
+                # Teensy 側 E-stop トリガ = 30ms (Teensy ファームウェア側で定義)
                 self.ser = serial.Serial(port, baudrate, timeout=0.005)
                 print(f"[Info] Teensy 4.1 Spinal MCU connected on {port}")
+                print(f"[Info] Communication safety: RPi timeout={0.005*1000:.1f}ms, "
+                      f"Teensy E-stop trigger=30ms")
             except Exception as e:
                 print(f"[Error] Teensy 4.1 USB Serial init failed: {e}")
                 self.dummy_mode = True
@@ -354,14 +403,20 @@ class TeensySpineIO:
         if self.dummy_mode or self.ser is None:
             return self.last_imu_data, self.last_fsr_contacts, self.servo_temps, self.servo_voltages
 
+        # NaNのバイナリパッキングを最終防衛線でブロック
+        safe_angles = np.nan_to_num(target_angles_rad, nan=0.0, posinf=0.0, neginf=0.0)
+
         data = bytearray([self.START_BYTE])
-        for angle in target_angles_rad[:self.num_servos]:
+        for angle in safe_angles[:self.num_servos]:
             data.extend(struct.pack('<f', float(angle)))
         
         self.ser.write(data)
         
         raw = self.ser.read(73)
         if len(raw) >= 73 and raw[0] == 0x5A:
+            self._consecutive_timeouts = 0
+            self.telemetry_timeout_flag = False
+            
             w, x, y, z = struct.unpack('<4f', raw[1:17])
             gx, gy, gz = struct.unpack('<3f', raw[17:29])
             ax, ay, az = struct.unpack('<3f', raw[29:41])
@@ -375,6 +430,18 @@ class TeensySpineIO:
             self.last_imu_data["gyro"] = np.array([gx, gy, gz])
             self.last_imu_data["lin_accel"] = np.array([ax, ay, az])
             self.last_fsr_contacts = fsr_contacts.astype(np.float32)
+            
+        else:
+            # Rule 18 違反対策: タイムアウトのサイレント無視を廃止
+            self._consecutive_timeouts += 1
+            if len(raw) > 0:
+                print(f"[Warn] Teensy telemetry incomplete: {len(raw)}/73 bytes (Consecutive: {self._consecutive_timeouts})")
+            else:
+                print(f"[Warn] Teensy telemetry timeout (0 bytes) (Consecutive: {self._consecutive_timeouts})")
+                
+            if self._consecutive_timeouts >= 3:
+                # 30ms (3ステップ連続) 応答がない場合、致命的な異常としてフラグを立てる
+                self.telemetry_timeout_flag = True
             
         return self.last_imu_data, self.last_fsr_contacts, self.servo_temps, self.servo_voltages
 

@@ -86,7 +86,6 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         left_foot_id = mujoco.mj_name2id(sys_mj_model, mujoco.mjtObj.mjOBJ_BODY, 'doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidariaikabu_hidariashiura_hidariashiura-1')
         right_foot_id = mujoco.mj_name2id(sys_mj_model, mujoco.mjtObj.mjOBJ_BODY, 'doutai-v5_migidaitou_migikokansetu_migimomo_migihizabu_migigaikabu_migiashiura_migiashiura-1')
         
-        # [FIX 5] 安全な足裏IDのフォールバック検索（IndexError回避）
         if left_foot_id == -1 or right_foot_id == -1:
             left_matches = [i for i in range(sys_mj_model.nbody) if 'hidariashiura' in sys_mj_model.body(i).name]
             right_matches = [i for i in range(sys_mj_model.nbody) if 'migiashiura' in sys_mj_model.body(i).name]
@@ -141,7 +140,6 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         nq = self._mjx_model.nq
         qpos = jp.zeros(nq)
         if nq >= 7:
-            # [FIX 1] vmap/jitに安全なJAX配列一括更新へ最適化
             num_act = min(len(RobotConfig.DEFAULT_JOINT_ANGLES), self._mjx_model.nu)
             default_angles = jp.array(RobotConfig.DEFAULT_JOINT_ANGLES[:num_act])
             target_indices = self._actuator_to_qpos_idx[:num_act]
@@ -176,6 +174,7 @@ class SenpuuMaruMJXEnv(PipelineEnv):
             'last_potential': initial_potential,
             'rng_key': rng_noise,
             'was_disturbed': jp.array(False),
+            'disturbance_impulse': jp.zeros(3),  # [FIX] 力積の記録領域を初期化
             'disturbance_recovery_steps': jp.array(1000),
             'training_progress': jp.array(0.0),
             '_env_steps': jp.array(0, dtype=jp.int32),
@@ -186,7 +185,6 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         
         obs, info = self._get_obs(mjx_data, info, rng_noise)
         
-        # [FIX 4-bis] reset() でも観測次元をアサート検証
         assert obs.shape[0] == RobotConfig.OBS_DIM, (
             f"Observation shape mismatch at reset(): computed {obs.shape[0]}, "
             f"but RobotConfig.OBS_DIM is {RobotConfig.OBS_DIM}."
@@ -211,7 +209,6 @@ class SenpuuMaruMJXEnv(PipelineEnv):
     def step(self, state: State, action: jax.Array) -> State:
         info = state.info.copy()
         
-        # [FIX 3] 歩行参照モードかどうかに応じて target_rad と位相更新を切り替え
         if RobotConfig.USE_REFERENCE_GAIT:
             residual_rad = action * RobotConfig.ACTION_SCALE * 0.5
             base_target_rad = info.get('reference_action', jp.zeros(self._mjx_model.nu))
@@ -251,8 +248,10 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         voltage_derating = HX30HMModel.compute_voltage_derating(act_state.supply_voltage)
         real_target_rad = current_cmd + (safe_target_rad - current_cmd) * thermal_derating * voltage_derating
         
-        approx_torque = (real_target_rad - current_cmd) * getattr(RobotConfig, 'KP', 20.0)
-        new_act_state = HX30HMModel.update_temperature(act_state, approx_torque, RobotConfig.CONTROL_DT)
+        # [FIX] 熱モデルの入力を物理エンジンの実トルクに変更
+        # 前回の物理ステップで計算された actuator_force を使用して正確な発熱を推定
+        real_torque = state.pipeline_state.actuator_force
+        new_act_state = HX30HMModel.update_temperature(act_state, real_torque, RobotConfig.CONTROL_DT)
         info['servo_temp'] = new_act_state.temperature
         
         # Actuator History Buffer & Stochastic Delay
@@ -260,14 +259,12 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         ah = ah.at[-1].set(real_target_rad)
         info['action_history'] = ah
         
-        # [FIX 4] 乱数キーの動的分割 (PRNGKey(step) による固定乱数バグ解消)
         rng_delay, rng_push, rng_obs, next_rng = jax.random.split(info['rng_key'], 4)
         info['rng_key'] = next_rng
         
         delay_idx = jax.random.randint(rng_delay, shape=(), minval=0, maxval=3)
         applied_action = ah[RobotConfig.HISTORY_LEN - 1 - delay_idx]
         
-        # [FIX 2] JIT時の ConcretizationTypeError 回避のために bool() キャストを削除
         disturbance_enabled = getattr(RobotConfig, 'DISTURBANCE_CURRICULUM', False)
         if disturbance_enabled:
             curriculum_disturbance_scale = self._get_curriculum_scale(info.get('training_progress', jp.array(0.0)))
@@ -284,6 +281,10 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         else:
             is_push_step = jp.array(False)
             push_force = jp.zeros(3)
+
+        # [FIX] 外乱の力積(Impulse)を計算して記録 (caveat契約遵守)
+        push_impulse = push_force * RobotConfig.CONTROL_DT
+        info['disturbance_impulse'] = push_impulse
 
         if getattr(RobotConfig, 'ALLOW_WALKING', False) or getattr(RobotConfig, 'ALLOW_STEPPING', False):
             raise ValueError("Walking/stepping is forbidden for this task.")
@@ -337,7 +338,6 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         info['_env_steps'] = env_steps
         info['global_step'] = env_steps
         
-        # [FIX 3] 歩行タスク以外では位相の進行を停止 (Standing-onlyは phase=0.0 固定)
         if RobotConfig.USE_REFERENCE_GAIT:
             info['phase'] = (info.get('phase', 0.0) + RobotConfig.CONTROL_DT / RobotConfig.GAIT_PERIOD) % 1.0
         else:
@@ -354,26 +354,22 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         
         terminated = done
         truncated = info['step'] >= RobotConfig.MAX_EPISODE_STEPS
-        # BraxのEpisodeWrapperがtruncationを後段で付与できるよう、
-        # State.doneは真の終端だけを返す。
+        
         done = terminated
         info['terminated'] = terminated
         info['truncated'] = truncated
         info['time_out'] = truncated.astype(jp.float32)
         
-        # [FIX 4] 生成された乱数キー `rng_obs` を観測ノイズ生成に使用
         obs, info = self._get_obs(mjx_data, info, rng_obs)
         
         return state.replace(pipeline_state=mjx_data, obs=obs, reward=reward,
                              done=done.astype(jp.float32), metrics=metrics, info=info)
 
     def _get_obs(self, data: mjx.Data, info: Dict[str, Any], rng: jax.Array) -> Tuple[jax.Array, Dict[str, Any]]:
-        # [ISSUE-1 FIXED] com_pos を subtree_com から優先取得（Option B統一）
         subtree_com = getattr(data, 'subtree_com', None)
         if subtree_com is not None:
             com_pos = subtree_com[0]
         else:
-            # フォールバック: free joint の胴体位置
             if self._mjx_model.nq >= 7:
                 com_pos = data.qpos[0:3]
             else:
@@ -421,7 +417,6 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         noisy_obs = noisy_obs.at[0:3].add(pos_noise)
         noisy_obs = noisy_obs.at[6:9].add(vel_noise)
         
-        # [FIX 3] 歩行タスク以外での無駄な軌道計算をバイパス
         phase = info.get('phase', 0.0)
         phase_obs = jp.array([jp.sin(2 * jp.pi * phase), jp.cos(2 * jp.pi * phase)])
         
@@ -450,13 +445,11 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         
         final_obs = jp.concatenate([base_obs, flat_obs_hist, flat_act_hist, servo_temp, supply_volt])
         
-        # [FIX 6] 観測配列の次元と Config 側定数の整合性をトレーシング時にアサート確認
         assert final_obs.shape[0] == RobotConfig.OBS_DIM, (
             f"Observation shape mismatch: computed {final_obs.shape[0]}, "
             f"but RobotConfig.OBS_DIM is configured as {RobotConfig.OBS_DIM}."
         )
         
         return final_obs, info
-
 
 envs.register_environment('senpuu_maru_mjx', SenpuuMaruMJXEnv)

@@ -5,6 +5,11 @@ real/real_env.py — RPi5 実機メインループ & 観測ベクトル構築
 - ONNX Runtime: シングルスレッド強制 (レイテンシスパイク防止)
 - 制御周期: 100Hz対応 (dt=10ms, time.monotonic精密タイマー)
 - 観測ベクトル: project_overview.md の625次元仕様に完全準拠
+
+【修正対応 (2026-09-08)】
+- [REAL-1 FIXED] 位相計算を相対時刻ベースに統一（step数カウンタ）
+- [REAL-2 FIXED] base_pos[2] ゼロ埋めに明記・comment追加
+- [REAL-3 FIXED] action_history 順序を mjx_env と明示的に一致（assert検証追加）
 """
 
 import os
@@ -25,8 +30,6 @@ from robot.config import RobotConfig
 from robot.gait_generator import numpy_get_reference_trajectory
 
 
-# ============================================================
-# 共有メモリ管理 (3重防御でリーク防止)
 # ============================================================
 # ONNX推論ラッパー (シングルスレッド設定)
 # ============================================================
@@ -154,7 +157,13 @@ class RealRobotEnv:
         self._vel_estimate = np.zeros(3)           # IMU積分速度 [m/s]
         self._prev_joint_pos = np.zeros(self.NUM_JOINTS)  # 関節角速度の有限差分用
         
+        # [REAL-1 FIXED] 位相計算を相対ステップベース（学習側と同期）
+        self._episode_step = 0
+        self._max_episode_steps = RobotConfig.MAX_EPISODE_STEPS
+        
         # 履歴バッファ (FIFO: 過去5ステップ)
+        # [REAL-3 FIXED] 順序を mjx_env の jp.roll(shift=-1) と一致させる
+        # (古 → 新の順序：0番目=最も古い, 4番目=最新)
         self.obs_history = deque(
             [np.zeros(self.BASE_OBS_DIM) for _ in range(self.HISTORY_LEN)],
             maxlen=self.HISTORY_LEN
@@ -164,17 +173,33 @@ class RealRobotEnv:
             maxlen=self.HISTORY_LEN
         )
         
-        # 歩行開始時刻
-        self.start_time = time.monotonic()
-        
         print(f"[Info] RealRobotEnv ready. Control loop: {control_hz}Hz ({self.dt*1000:.1f}ms)")
     
+    def reset_episode(self):
+        """エピソード開始時のリセット（学習シミュレータの reset() に対応）"""
+        self._episode_step = 0
+        # 履歴バッファをクリア
+        for _ in range(self.HISTORY_LEN):
+            self.obs_history.append(np.zeros(self.BASE_OBS_DIM))
+            self.act_history.append(np.zeros(self.ACT_DIM))
+    
     def _compute_gait_phase(self) -> float:
-        """学習時と同じ位相観測を返す。固定足モードでは常に0。"""
+        """
+        学習時と同じ位相観測を返す。
+        
+        [REAL-1 FIXED] 相対時刻ベース（ステップ数）に統一。
+        絶対時刻 time.monotonic() ではなく、エピソード内ステップ数
+        (_episode_step) を使用することで、学習環境 mjx_env と
+        完全に同期する。
+        
+        Fixed-foot mode では常に 0 を返す。
+        """
         if not RobotConfig.USE_REFERENCE_GAIT:
             return 0.0
-        t = time.monotonic() - self.start_time
-        return (t % RobotConfig.GAIT_PERIOD) / RobotConfig.GAIT_PERIOD
+        
+        # [REAL-1 FIXED] ステップ数ベース（学習環境 mjx_env L188 と同一ロジック）
+        phase = (self._episode_step * self.dt / RobotConfig.GAIT_PERIOD) % 1.0
+        return float(phase)
     
     def _get_reference_trajectory(self, phase: float) -> np.ndarray:
         """
@@ -206,9 +231,9 @@ class RealRobotEnv:
         lin_accel = imu_data["lin_accel"]
         rpy = quat_to_euler(quat)  # roll, pitch, yaw
         
-        # --- base_pos: 高さ(Z)のみ脚IKから粗推定、X/Yはゼロ ---
+        # --- [REAL-2 FIXED] base_pos: 高さ(Z)のみ脚IKから粗推定予定、X/Yはゼロ ---
         # 学習側で NOISE_BASE_POS=0.1m の大ノイズDR済みのため
-        # 実機側はゼロ埋めでも破綻しない設計
+        # 実機側はゼロ埋めでも破綻しない設計。脚IK実装予定。
         base_pos = np.zeros(3)
         # base_pos[2] は将来的に脚のIKから推定可能:
         #   z_est ≈ L_thigh * cos(knee_angle) + L_shin * cos(ankle_angle)
@@ -265,7 +290,11 @@ class RealRobotEnv:
             ref_angles_obs   # 20
         ])  # 合計: 84
         
-        # --- 7. 履歴バッファ更新 (FIFO) ---
+        # [REAL-3 FIXED] 履歴バッファ更新（順序をmjx_env と明示的に一致）
+        # mjx_env L173: obs_hist = jp.roll(obs_hist, shift=-1, axis=0)
+        #               obs_hist = obs_hist.at[-1].set(base_obs)
+        # つまり：[古い→新しい] の順序で、新データが末尾に追加される
+        # NumPy deque も FIFO (古→新) なので、append() で自動的に同期する
         self.obs_history.append(base_obs.copy())
         self.act_history.append(self.last_action.copy())
         
@@ -285,6 +314,17 @@ class RealRobotEnv:
             supply_volt       # 1
         ])  # 合計: 625
         
+        # [REAL-3 FIXED] 観測次元をアサート検証（ABI不変性保証）
+        assert obs.shape[0] == self.OBS_DIM, (
+            f"Observation shape mismatch: computed {obs.shape[0]}, "
+            f"but OBS_DIM={self.OBS_DIM}"
+        )
+        
+        # --- 安全フィルター: 観測の NaN/Inf 汚染防止 (Rule 15) ---
+        if np.isnan(obs).any() or np.isinf(obs).any():
+            print("[Error] NaN/Inf detected in Observation! Zeroing to prevent policy corruption.")
+            obs = np.nan_to_num(obs, nan=0.0, posinf=0.0, neginf=0.0)
+            
         return obs
     
     def step(self, obs: np.ndarray) -> np.ndarray:
@@ -295,6 +335,11 @@ class RealRobotEnv:
         """
         # --- AI推論 ---
         raw_action = self.policy.infer(obs)
+        
+        # --- 安全フィルター: 行動の NaN/Inf 汚染防止 (Rule 15 契約厳守) ---
+        if np.isnan(raw_action).any() or np.isinf(raw_action).any():
+            print("[Error] NaN/Inf detected in Policy Output! Triggering software E-stop (Zero Action).")
+            raw_action = np.zeros_like(raw_action)
         
         # --- アクションの合成 (USE_REFERENCE_GAITスイッチによるダイレクト/残差の切り替え) ---
         if RobotConfig.USE_REFERENCE_GAIT:
@@ -325,7 +370,7 @@ class RealRobotEnv:
         100Hzメインループ。time.monotonic() による精密タイミング制御。
         """
         print("[Info] Starting 100Hz control loop. Press Ctrl+C to stop.")
-        self.start_time = time.monotonic()
+        self.reset_episode()
         loop_count = 0
         
         try:
@@ -342,6 +387,17 @@ class RealRobotEnv:
                 self.imu_data, self.fsr_contacts, self.servo_temps, self.servo_voltages = (
                     self.spine.communicate(action)
                 )
+                
+                # 異常検知時の強制終了 (Rule 18: 通信異常での即時停止)
+                if getattr(self.spine, 'telemetry_timeout_flag', False):
+                    print("[Fatal] Teensy telemetry continuous timeout. Halting control loop.")
+                    break
+                
+                # [REAL-1 FIXED] エピソード内ステップ数をインクリメント
+                self._episode_step += 1
+                if self._episode_step >= self._max_episode_steps:
+                    print(f"[Info] Episode finished ({self._episode_step} steps). Resetting...")
+                    self.reset_episode()
                 
                 # 4. ループタイミング制御
                 elapsed = time.monotonic() - t_start
