@@ -1,6 +1,6 @@
 # 進捗ステータス
 
-最終更新: 2026-09-03（Copilot）
+最終更新: 2026-09-09（Copilot）
 
 ## 現在地
 
@@ -10,12 +10,12 @@
 - 評価基盤: 成功率、両足接地率、最大足移動量、最大roll/pitch、回復時間、トルク飽和率の集計を追加。
 - PPO基盤: `--seed`／`--target_kl`をCLI化し、`State.done`をterminated限定へ修正。
 - 整理完了: 未使用RMAネットワーク／共有メモリ、旧センサーフュージョン、未使用抽象環境、仕様外地形テスト、旧SPI資料を廃止。学習・実機・評価経路を標準PPO MLPへ統一。
-- 着手中: Phase 0 PPO安定性診断
-- 次: GPU/WSLで固定足立位モデルをseed指定で学習し、checkpoint生成後に外乱強度別評価を実行
+- 着手中: Phase 0 PPO安定性診断（D-1〜D-5の計測準備）
+- 次: 現行設定を変えずにD-6のGPU Debug runを実行し、KL・終端理由・報酬内訳・deterministic評価を収集
 
 ## 直近の判定根拠
 
-関連Pythonの構文検査、VS Codeエラー検査、立位設定・外乱設定のWSL上のassert検証、学習CLIの`--seed`／`--target_kl`確認に合格。pytestはWSL環境にも未インストール。実checkpointによる評価は未実行。
+関連Pythonの構文検査、VS Codeエラー検査、立位設定・外乱設定のWSL上のassert検証、学習CLIの`--seed`／`--target_kl`確認に合格。`--target_kl`はBraxのAdaptive KL学習率制御に接続されているが、epoch内early stoppingではない。pytestはWSL環境にも未インストール。実checkpointによる評価は未実行。
 
 ## エスカレーション中の項目
 
@@ -61,3 +61,38 @@ std下限がKL爆発の主要因（min_std=0.00283→0.05019）
 初期KLスパイク（232）が残存
 episode_alive後半低下の詳細原因
 報酬構成とreward hackingの関係
+
+# 進捗ステータス
+
+最終更新: 2026-09-09
+
+## 現在地
+
+- 完了:
+  - `robot/config.py` の curriculum / initial height / gait parameter 整理
+  - `robot/kinematics.py` のリンク長単位整合と到達範囲判定修正
+  - `robot/math_utils.py` の JAX/NumPy 分離と JIT 互換化
+  - `real/real_env.py` の位相同期と FIFO 履歴整合
+  - `real/real_io.py` の checksum 検証厳格化
+  - `safety/cbf.py` の margin 計算とペナルティ基準統一
+- 着手中:
+  - viewer 系の実行パス/生成手順の最終整備
+  - status 文書の更新反映
+- 目標:
+  - 固定足直立制御における外乱耐性の検証を継続
+  - 実測値反映による sim-to-real 整合性向上
+
+## 直近の判定根拠
+
+- `robot/config.py` で `CURRICULUM_SCHEDULE_FRACTIONS` へ統一済み
+- `GAIT_THIGH_LEN` / `GAIT_KNEE_LEN` が 0.12 m に統一済み
+- `kinematics.py` の長さ比較が [m] 単位で正しく動作
+- `math_utils.py` の `quat_to_euler` が NumPy/JAX で分離され、JIT 互換の設計になっている
+- `real_io.py` の checksum 検証は破損データを `None` で落とすように修正済み
+- viewer 側は相対パス依存の修正と生成スクリプトの明確化が未反映
+
+## エスカレーション中の項目
+
+- viewer 系のパス解決と自動生成手順の整備
+- status 文書の最新状態への反映
+- 実測値を取り込んだ後の sim-to-real 再検証
