@@ -1,11 +1,24 @@
 #!/usr/bin/env python3
-"""Formal Gate 0 and initial foot-contact validation for the standing task."""
+"""Formal Gate 0 evaluation for learned RL policy (no-disturbance baseline).
+
+学習済みRL方策を読み込んで、無外乱条件でGate 0判定を実施する。
+物理・初期姿勢の確認用ゼロ行動評価ではなく、実checkpointの方策を使用する。
+
+Usage:
+  python scratch/gate0_formal_eval.py \
+    --exp_name phase0_qual_seed0 \
+    --version 0 \
+    --model best_params.pkl \
+    --seconds 30 \
+    --seed 0
+"""
 
 import argparse
 import json
 import os
 import sys
 from pathlib import Path
+from typing import Optional, Tuple
 
 import numpy as np
 
@@ -33,6 +46,88 @@ def configure_deterministic_gate0():
     RobotConfig.RANDOM_COM_OFFSET = [0.0, 0.0]
     RobotConfig.RANDOM_TEMP = [40.0, 40.0]
     RobotConfig.RANDOM_VOLT = [11.1, 11.1]
+
+
+def find_checkpoint(
+    exp_name: str,
+    version: Optional[int] = None,
+    model: str = "best_params.pkl",
+) -> Optional[Path]:
+    """学習済みcheckpointのパスを検索する。
+    
+    Args:
+        exp_name: log/<exp_name> の形式でexperiment name
+        version: version番号。Noneなら最新を選ぶ
+        model: checkpoint filename (best_params.pkl, final_params.pkl等)
+    
+    Returns:
+        Path to checkpoint, or None if not found.
+    """
+    if not exp_name:
+        return None
+    
+    log_base = ROOT / "log" / exp_name
+    if not log_base.exists():
+        print(f"[Gate0] WARNING: {log_base} not found")
+        return None
+    
+    version_dirs = sorted([d for d in log_base.iterdir() if d.is_dir() and d.name.startswith("version_")])
+    if not version_dirs:
+        print(f"[Gate0] WARNING: no version_* directories in {log_base}")
+        return None
+    
+    if version is None:
+        # 最新版を選ぶ
+        version_dir = version_dirs[-1]
+    else:
+        version_dir = log_base / f"version_{version}"
+    
+    checkpoint_path = version_dir / model
+    if not checkpoint_path.exists():
+        print(f"[Gate0] WARNING: {checkpoint_path} not found")
+        return None
+    
+    return checkpoint_path
+
+
+def load_checkpoint_and_make_policy(checkpoint_path: Path):
+    """Checkpointを読み込んで、policyを生成する。
+    
+    Returns:
+        policy_fn: (obs) -> action の関数
+        params: 学習済みパラメータ
+    """
+    try:
+        from train.visualize_rl import load_checkpoint, make_policy_network_factory
+        from brax.training.agents.ppo import networks as ppo_networks
+    except ImportError as e:
+        raise ImportError(f"Cannot import training utilities: {e}")
+    
+    # checkpointを読み込む
+    params = load_checkpoint(str(checkpoint_path))
+    if params is None:
+        raise RuntimeError(f"Failed to load checkpoint from {checkpoint_path}")
+    
+    # 観測・行動次元を把握するため、probe envを作る
+    probe_env = SenpuuMaruMJXEnv()
+    network = make_policy_network_factory(
+        probe_env.observation_size,
+        probe_env.action_size,
+    )
+    make_policy = ppo_networks.make_inference_fn(network)
+    
+    # params の leading dimension を strip（ある場合）
+    def strip_leading_dim(leaf):
+        if hasattr(leaf, "shape") and getattr(leaf, "ndim", 0) > 0 and leaf.shape[0] == 1:
+            return leaf.squeeze(0)
+        return leaf
+    
+    params_stripped = jax.tree_util.tree_map(strip_leading_dim, params)
+    
+    # deterministic=False で policy を作る（stochastic sampling）
+    policy_fn = jax.jit(make_policy(params_stripped, deterministic=False))
+    
+    return policy_fn, params_stripped
 
 
 def as_float(value):
@@ -82,12 +177,41 @@ def measure_state(env, state, geom_ids, sensor_start, sensor_end):
     }
 
 
-def evaluate(seed, seconds, output_dir):
+def evaluate(
+    seed: int,
+    seconds: float,
+    output_dir: Path,
+    exp_name: str = "",
+    version: Optional[int] = None,
+    model: str = "best_params.pkl",
+    policy_fn = None,
+):
+    """Gate 0 evaluation with learned RL policy.
+    
+    Args:
+        seed: random seed
+        seconds: simulation duration in seconds
+        output_dir: where to save results
+        exp_name: experiment name (log/<exp_name>/<version_*>/)
+        version: version number within exp_name
+        model: checkpoint filename
+        policy_fn: pre-loaded policy function. If None, load from checkpoint.
+    """
     configure_deterministic_gate0()
     env = SenpuuMaruMJXEnv()
     steps = int(round(seconds / RobotConfig.CONTROL_DT))
     rng = jax.random.PRNGKey(seed)
     state = env.reset(rng)
+
+    # Policy を用意する
+    if policy_fn is None:
+        if not exp_name:
+            raise ValueError("Either --exp_name or pre-loaded policy_fn is required")
+        checkpoint_path = find_checkpoint(exp_name, version, model)
+        if checkpoint_path is None:
+            raise RuntimeError(f"Checkpoint not found for exp_name={exp_name}, version={version}")
+        print(f"[Gate0] Loading checkpoint: {checkpoint_path}")
+        policy_fn, params = load_checkpoint_and_make_policy(checkpoint_path)
 
     geom_ids = foot_geom_ids(env)
     sensor_count = int(env._mjx_model.nsensordata)
@@ -100,10 +224,12 @@ def evaluate(seed, seconds, output_dir):
     records = []
     terminated_step = None
     for step_index in range(steps):
-        action = jp.zeros(env.action_size, dtype=jp.float32)
+        rng, rng_policy = jax.random.split(rng)
+        action, _ = policy_fn(state.obs, rng_policy)
         state = env.step(state, action)
         sample = measure_state(env, state, geom_ids, sensor_start, sensor_end)
         sample["step"] = step_index + 1
+        sample["action_norm"] = float(jp.linalg.norm(action))
         records.append(sample)
         if bool(state.done):
             terminated_step = step_index + 1
@@ -161,14 +287,33 @@ def evaluate(seed, seconds, output_dir):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--seconds", type=float, default=10.0)
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--output-dir", type=Path, default=ROOT / "log" / "gate0_formal")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--exp_name", default="", help="log/<exp_name> の experiment name")
+    parser.add_argument("--version", type=int, default=None, help="version number within exp_name")
+    parser.add_argument("--model", default="best_params.pkl", help="checkpoint filename")
+    parser.add_argument("--seconds", type=float, default=30.0, help="simulation duration in seconds")
+    parser.add_argument("--seed", type=int, default=0, help="random seed")
+    parser.add_argument("--output-dir", type=Path, default=ROOT / "log" / "gate0_formal", help="output directory")
     args = parser.parse_args()
-    result = evaluate(args.seed, args.seconds, args.output_dir)
-    if not result["pass"]:
-        raise SystemExit(1)
+    
+    try:
+        result = evaluate(
+            seed=args.seed,
+            seconds=args.seconds,
+            output_dir=args.output_dir,
+            exp_name=args.exp_name,
+            version=args.version,
+            model=args.model,
+        )
+        if not result["pass"]:
+            print("[Gate0] FAIL: did not meet acceptance criteria")
+            raise SystemExit(1)
+        else:
+            print("[Gate0] PASS: accepted baseline")
+            raise SystemExit(0)
+    except Exception as e:
+        print(f"[Gate0] ERROR: {e}", file=sys.stderr)
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":
