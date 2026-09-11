@@ -1,3 +1,28 @@
+"""固定足立位タスク用の報酬関数 (MJXRewardSystem.compute())。
+
+成功判定は episode_alive 単独ではなく、以下の論理積で評価する
+(改良規約 §11 参照):
+  alive AND both_feet_contact AND upright AND height_ok
+  AND no_illegal_contact AND slip_ok AND torque_ok AND recovered_in_time
+
+報酬の主要成分:
+  - r_alive: 生存ボーナス
+  - r_upright / r_com_stab: 姿勢・重心安定性
+  - r_capture_point / r_recovery / r_disturbance_recovery: 外乱回復系
+    (Phase 0では外乱無効のため寄与は限定的)
+  - soft_penalty / safety_penalty: エネルギー・滑らかさ・CBF安全項
+
+NaN/Inf検出:
+  total_reward が clip される前に jp.isfinite で検査し、結果を
+  metrics['reward_is_finite'] (1.0=正常, 0.0=非有限値検出) として返す。
+  JAX JITトレース内でPythonのraiseは使えないため、フラグ経由で
+  呼び出し側 (train/train_mjx.py の progress_callback) に非有限値の
+  発生を伝える設計 (改良規約 §18 即時停止条件)。
+
+注意: このファイルは envs/mjx_env.py の step() (vmap/jit内部) から
+呼ばれるため、全ての引数は単一環境のスカラー(バッチ次元なし)である。
+"""
+
 import jax
 import jax.numpy as jp
 from typing import Tuple, Dict
@@ -392,6 +417,14 @@ class MJXRewardSystem:
             soft_penalty - safety_penalty
         )
 
+        # --- NaN/Inf 検出（改良規約 §18: 即時停止条件） ---
+        # clip前のtotal_rewardが非有限になっていないかをJAX互換の方法で検査する。
+        # ここでは Python の if/raise は使わない (JIT トレースを壊すため)。
+        # 代わりに jnp.isfinite の結果を metrics に float(0.0/1.0) として記録し、
+        # 呼び出し側 (train/train_mjx.py の progress_callback) が
+        # 学習ループの外側(非JIT領域)でこのフラグを見て停止判定を行う。
+        reward_is_finite = jp.all(jp.isfinite(total_reward)).astype(jp.float32)
+
         total_reward = jp.clip(total_reward, -300.0, 300.0)
         total_reward = jp.where(done, w['fall_penalty'], total_reward)
 
@@ -420,6 +453,8 @@ class MJXRewardSystem:
             'foot_balance': stability_metrics['foot_balance'],
             'barrier_height': p_barrier_height,
             'barrier_torque': p_barrier_torque,
+            # NaN/Inf診断用フラグ (1.0=正常, 0.0=非有限値を検出)
+            'reward_is_finite': reward_is_finite,
         }
 
         return total_reward, done, metrics, current_potential

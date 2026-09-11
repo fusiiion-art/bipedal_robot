@@ -1,3 +1,29 @@
+"""固定足立位ロボット用 MJX (MuJoCo XLA) 強化学習環境。
+
+このモジュールは SenpuuMaruMJXEnv を定義する。BraxのPipelineEnvを継承し、
+GPU/TPU上でのJAX並列学習に対応する。
+
+観測契約 (robot/config.py が正本、625次元):
+  Base observation (84) + 履歴5フレーム分 (420) + action履歴 (100)
+  + サーボ温度 (20) + 電源電圧 (1)
+  観測の要素順序・FSR左右順・履歴の新旧方向は既存checkpointとのABI互換の
+  ため変更してはならない (docs/current.md 参照)。
+
+アクション契約 (20次元):
+  関節目標角の残差 (Δq)。トルク直接指令は使わない。
+  パイプライン: policy output → ACTION_SCALE → default pose加算 →
+  deadband → 関節速度制限 → LPF → CBF → 熱/電圧derating → actuator
+
+固定足制約:
+  ALLOW_WALKING=False, ALLOW_STEPPING=False を常に維持する。
+  歩行・踏み替え・支持基底の変更は全て禁止 (raiseで防御的に検出)。
+
+外乱:
+  Phase 0では DISTURBANCE_CURRICULUM=False で無効。有効時は
+  RANDOM_PUSH_MAX_FORCE を上限とするランダム水平外力をqfrc_appliedへ
+  加算する形で実装される。
+"""
+
 from typing import Any, Dict, Tuple, Union
 import os
 import jax
@@ -16,6 +42,17 @@ class SenpuuMaruMJXEnv(PipelineEnv):
     """
     MuJoCo XLA (MJX) を使用した GPU/TPU 並列学習用の強化学習環境。
     BraxのPipelineEnvを継承しており、Brax PPOとシームレスに統合可能。
+
+    reset(rng) -> State:
+        物理初期姿勢(qpos/qvel)を固定nominal poseにリセットし、
+        domain randomization (質量/摩擦/重心/温度/電圧) を適用する。
+        注意: 初期姿勢そのもののrandomizationは未実装 (常に同一pose)。
+
+    step(state, action) -> State:
+        1制御周期(CONTROL_DT=0.01s, 実機100Hz相当)を進める。
+        内部でCONTROL_DECIMATION回の物理サブステップをjax.lax.scanで実行する。
+        戻り値のState.doneはterminated(転倒等)のみを表し、truncated(時間切れ)
+        はinfo['truncated']に分離して格納される(Braxのtime_out処理と整合)。
     """
     
     def __init__(self, obs_noise: float = 0.01, latency_steps: int = 1, **kwargs):
@@ -207,6 +244,20 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         return State(mjx_data, obs, reward, done, metrics, info)
 
     def step(self, state: State, action: jax.Array) -> State:
+        """1制御周期(CONTROL_DT=0.01秒)を実行する。
+
+        Args:
+            state: 直前のState (pipeline_state, obs, info を含む)
+            action: 20次元、[-1, 1]相当のpolicy出力。ACTION_SCALEで
+                スケールされ、default_pose + action*ACTION_SCALE として
+                目標関節角(残差方式)に変換される。
+
+        Returns:
+            新しいState。done は terminated のみを表す
+            (truncatedは state.info['truncated'] に分離)。
+            state.metrics には reward_is_finite 等の診断フラグを含む
+            (改良規約 §18 NaN/Inf即時停止条件のため)。
+        """
         info = state.info.copy()
         
         if RobotConfig.USE_REFERENCE_GAIT:
@@ -240,7 +291,22 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         limit_upper = self._mjx_model.actuator_ctrlrange[:, 1]
         
         safe_target_rad = self._cbf.filter_action(filtered_action, limit_lower, limit_upper)
-        cbf_penalty = self._cbf.compute_cbf_penalty(target_rad, limit_lower, limit_upper)
+        # [BUGFIX 2026-09-10] 旧呼び出しは compute_cbf_penalty(target_rad, limit_lower,
+        # limit_upper) となっており、safety/cbf.py の現行シグネチャ
+        # compute_cbf_penalty(nominal_action, safe_action, limit_lower=None, limit_upper=None)
+        # と噛み合っていなかった。結果として:
+        #   - 第2引数(safe_action)に limit_lower の値が誤って渡り、
+        #     direct_penalty が「target_radと関節下限との距離」という
+        #     無意味な量になっていた
+        #   - 第4引数(limit_upper)が渡されず None のままとなり、
+        #     margin-basedのsoftplusペナルティ(CBF-2/CBF-3で導入された
+        #     より厳格な項)が常にスキップされていた
+        # filter_action()が返す safe_target_rad (実際にクランプされた
+        # アクション)を正しく第2引数として渡すよう修正した。
+        # 物理的な安全性(filter_action()によるハードクランプ)自体は
+        # このバグの影響を受けていない。影響はCBFペナルティによる
+        # 報酬整形が意図通り機能していなかった点のみ。
+        cbf_penalty = self._cbf.compute_cbf_penalty(target_rad, safe_target_rad, limit_lower, limit_upper)
         
         # Thermal & Voltage Derating
         act_state = ActuatorState(temperature=info['servo_temp'], supply_voltage=info['supply_volt'])

@@ -1,7 +1,42 @@
+"""固定足立位ロボット「旋風丸」— MJXベースPPO学習エントリーポイント。
+
+このモジュールは以下を実装する:
+  - envs/mjx_env.py の SenpuuMaruMJXEnv (固定足立位環境) をBrax PPOで学習
+  - Brax内蔵のAdaptive KL学習率制御によるKLダイバージェンス監視
+    (--target_klはepoch内early stoppingではなく、Adaptive LR制御に接続される)
+  - checkpoint保存 (best/worst/final/last) と学習曲線ログ (log.json)
+  - NaN/Inf検出による即時停止 (改良規約 §18)
+
+主要な関数:
+  - parse_args(): CLI引数パース (--seed, --target_kl, --exp_name 等)
+  - progress_callback(): 学習中の進捗表示・ログ保存・NaN検出 (train()内部で定義)
+  - main() 相当のスクリプト本体: 環境構築 → PPO学習 → checkpoint保存
+
+使用例:
+  python train/train_mjx.py --seed=42 --target_kl=0.02
+  python train/train_mjx.py --exp_name phase0_debug_seed42 --seed=42 --target_kl=0.02
+
+環境仕様 (robot/config.py が正本):
+  - 観測: 625次元 (base 84 + history 420 + action_history 100 + temp 20 + volt 1)
+  - 行動: 20次元 (関節角の残差 Δq、トルク直接指令ではない)
+  - エピソード長: 500 step (100Hz制御、5秒)
+  - Phase 0: 外乱無効 (DISTURBANCE_CURRICULUM=False)
+
+改良規約上の制約 (docs/current.md, docs/master_plan.md 参照):
+  - 1 iteration = 1変更カテゴリ (報酬とPPO設定を同時に変えない)
+  - 合格済みcheckpointを上書きしない (--exp_name で世代管理する)
+  - NaN/Inf検出時は即座に停止し、log/<exp_name>/NAN_DETECTED.txt に記録する
+
+ハードウェア:
+  - CPU: 単体テスト・形状確認用 (num_envs=32等、小規模)
+  - GPU: 本番学習用 (RTX 4060+推奨、num_envs=256、10M step で約30-60分)
+"""
+
 import os
 import sys
 import argparse
 import time
+import numpy as np
 from datetime import datetime
 
 # sysモジュールのパッチ (Windows上のbrax/orbax依存対策)
@@ -222,6 +257,81 @@ def main():
         import pickle
         nonlocal best_reward, worst_reward
         reward = metrics.get('eval/episode_reward', metrics.get('training/total_reward', float('nan')))
+
+        # --- NaN/Inf 即時停止チェック（改良規約 §18: 即時停止条件） ---
+        # KLスパイクや勾配爆発が発生すると reward や他の主要metricsが
+        # NaN/Infになりうる。これを検出しないまま学習を続けると、
+        # 壊れたcheckpointをbest_paramsとして保存してしまう危険がある。
+        if not np.isfinite(reward):
+            print(f"\n{'='*70}", flush=True)
+            print(f"❌ FATAL: NaN/Inf detected in reward at step {num_steps}!", flush=True)
+            print(f"   reward={reward}", flush=True)
+            print(f"   metrics keys={list(metrics.keys())}", flush=True)
+            print(f"{'='*70}\n", flush=True)
+            # 直近のmetrics_historyを保存してから停止（原因調査用）
+            with open(run_dir / "log.json", "w") as f:
+                json.dump(metrics_history, f, indent=2)
+            with open(run_dir / "NAN_DETECTED.txt", "w") as f:
+                f.write(f"step={num_steps}\nreward={reward}\nmetrics={metrics}\n")
+            raise RuntimeError(
+                f"NaN/Inf detected in reward at step {num_steps}. "
+                f"Training stopped per改良規約 §18 (即時停止条件). "
+                f"Details written to {run_dir / 'NAN_DETECTED.txt'}"
+            )
+
+        # 主要metrics全体もチェック（reward以外にKL, value_loss等も対象）
+        for key, value in metrics.items():
+            try:
+                val_float = float(value.item() if hasattr(value, 'item') else value)
+            except (TypeError, ValueError):
+                continue
+            if not np.isfinite(val_float):
+                print(f"\n{'='*70}", flush=True)
+                print(f"❌ FATAL: NaN/Inf detected in metric '{key}' at step {num_steps}!", flush=True)
+                print(f"   value={val_float}", flush=True)
+                print(f"{'='*70}\n", flush=True)
+                with open(run_dir / "log.json", "w") as f:
+                    json.dump(metrics_history, f, indent=2)
+                with open(run_dir / "NAN_DETECTED.txt", "w") as f:
+                    f.write(f"step={num_steps}\nmetric={key}\nvalue={val_float}\nmetrics={metrics}\n")
+                raise RuntimeError(
+                    f"NaN/Inf detected in metric '{key}' at step {num_steps}. "
+                    f"Training stopped per改良規約 §18 (即時停止条件)."
+                )
+
+        # --- 専用フラグ 'reward_is_finite' のチェック ---
+        # envs/mjx_rewards.py の compute() が jnp.isfinite で算出したフラグ。
+        # 0.0/1.0 という値自体は有限なので、上の汎用isfiniteチェックでは
+        # 検出できない(0.0は有限)。このフラグが0.0の場合は
+        # 「reward算出の途中経路でNaN/Infが発生した」ことを意味するため、
+        # 専用に検査する。値はBraxのepisode集約で平均化されるため、
+        # 1エピソードでも非有限値を含めば1.0未満になる。
+        reward_is_finite_key = None
+        for key in metrics.keys():
+            if key.endswith("reward_is_finite"):
+                reward_is_finite_key = key
+                break
+        if reward_is_finite_key is not None:
+            finite_ratio = metrics[reward_is_finite_key]
+            finite_ratio = float(finite_ratio.item() if hasattr(finite_ratio, 'item') else finite_ratio)
+            if finite_ratio < 1.0:
+                print(f"\n{'='*70}", flush=True)
+                print(f"❌ FATAL: reward computation produced NaN/Inf at step {num_steps}!", flush=True)
+                print(f"   {reward_is_finite_key}={finite_ratio} (< 1.0 means some envs saw non-finite reward)", flush=True)
+                print(f"   → envs/mjx_rewards.py の compute() 内の各報酬成分を確認してください", flush=True)
+                print(f"{'='*70}\n", flush=True)
+                with open(run_dir / "log.json", "w") as f:
+                    json.dump(metrics_history, f, indent=2)
+                with open(run_dir / "NAN_DETECTED.txt", "w") as f:
+                    f.write(
+                        f"step={num_steps}\n{reward_is_finite_key}={finite_ratio}\n"
+                        f"source=envs/mjx_rewards.py compute()\nmetrics={metrics}\n"
+                    )
+                raise RuntimeError(
+                    f"reward_is_finite={finite_ratio} at step {num_steps}: "
+                    f"non-finite value detected inside mjx_rewards.compute(). "
+                    f"Training stopped per改良規約 §18 (即時停止条件)."
+                )
 
         # 学習進捗率の計算と表示。ここでは総乱数ステップではなく、
         # 各環境の累積ステップを単調に増やす構造を優先し、
