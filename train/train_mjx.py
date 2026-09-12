@@ -62,7 +62,33 @@ from brax.training.agents.ppo import networks as ppo_networks
 from brax.training import distribution as brax_distribution
 
 POLICY_MEAN_CLIP_SCALE = 3.0
-POLICY_MIN_STD = 0.05
+# [KL-1 PROPOSED 2026-09-11] POLICY_MIN_STD を 0.05 → 0.15 に引き上げる提案。
+#
+# 根拠（Brax実ソース brax/training/distribution.py の _NormalDistribution.kl_divergence
+# を直接確認して導出。詳細は docs/status.md の該当セクション参照）:
+#   Braxのkl_mean計算は、20関節分のKLを sum(axis=-1) してからbatch平均を取る実装。
+#   scale(std)がほぼ変化しない場合、1関節あたりの寄与は近似的に
+#     kl_per_joint ≈ Δμ² / (2σ²)
+#   となり、20関節合計は
+#     kl_total ≈ 20 × Δμ² / (2σ²)
+#   σ=0.05（現状）のとき、1関節あたり平均 Δμ≈0.24rad のシフトだけで
+#   kl_total≈230 となり、報告されていたKL=232とほぼ一致することを確認した
+#   （docs/status.md 2026-09-01 記載の値）。
+#   Δμ=0.24rad は、学習初期（コールドスタート、観測正規化とAdaptive-KLの
+#   フィードバックがまだ効いていない最初の数ミニバッチ）では十分あり得る
+#   規模である。
+#
+#   σを0.05→0.15（3倍）に引き上げると、kl_totalは同じΔμに対して
+#   1/9に減少する見込み（232 → 約26）。既にstatus.md 2026-09-01時点で
+#   min_std=0.00283→0.05019への引き上げが KL=18418→232 (98.7%減) を
+#   達成した実績があり、同じ方向の追加調整として位置付けられる。
+#
+#   【重要】この変更は改良規約の「1 iteration = 1変更カテゴリ」に基づき、
+#   PPO最適化系（policy分布パラメータ）の単独変更として提案するもの。
+#   報酬系(mjx_rewards.py)とは同時変更しないこと。
+#   GPU Debug run (D-6) で実測KLトレンドを確認してから正式採用を判断すること。
+#   探索性能(policy_dist_mean_std等)への悪影響がないかも合わせて確認する。
+POLICY_MIN_STD = 0.15
 POLICY_MAX_STD = 3.0
 
 
