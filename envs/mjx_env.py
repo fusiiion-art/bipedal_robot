@@ -238,7 +238,18 @@ class SenpuuMaruMJXEnv(PipelineEnv):
             'foot_balance': zero, 'zmp_margin': zero,
             'disturbance_recovery_bonus': zero, 'stability_index': zero,
             'curriculum_scale': zero,
-            'barrier_height': zero, 'barrier_torque': zero
+            'barrier_height': zero, 'barrier_torque': zero,
+            # [監査追加 2026-09-13] step()で追加したキーとpytree構造を
+            # 一致させる必要がある(reset/step間でmetrics辞書の
+            # キー集合・shapeが異なるとjax.lax.scan等でエラーになるため)。
+            'r_upright': zero,
+            'action_saturation': zero, 'cbf_correction_norm': zero,
+            # [監査追加 2026-09-13] stability_metrics.py / mjx_rewards.py
+            # 側で追加した診断フラグとpytree構造を一致させる。
+            'stability_metrics_finite': zero, 'com_accel_is_fallback': zero,
+            # [予防追加 2026-09-13] envs/mjx_env.py の physics_step
+            # ロールバック機構が発散を検出したかどうかのフラグ。
+            'physics_diverged': zero,
         }
         
         return State(mjx_data, obs, reward, done, metrics, info)
@@ -369,11 +380,27 @@ class SenpuuMaruMJXEnv(PipelineEnv):
             qfrc_applied = qfrc_applied.add(damping_torque + friction_torque)
 
         def physics_step(carry, _):
+            d_prev = carry
             d = carry.replace(ctrl=applied_action, qfrc_applied=qfrc_applied)
             d = mjx.step(self._mjx_model, d)
-            return d, None
-            
-        mjx_data, _ = jax.lax.scan(physics_step, state.pipeline_state, (), length=RobotConfig.CONTROL_DECIMATION)
+            # [予防追加 2026-09-13] NaN/Inf予防: mjx.step() は
+            # NaN-in→NaN-out のため、CONTROL_DECIMATION回のサブステップの
+            # うち1回でも発散すると、残り全サブステップが汚染され、この
+            # 環境は(次に外部からリセットされるまで)永続的にNaN化して
+            # しまう。ここで即座に直前の有効な状態へロールバックすることで
+            # 汚染の伝播を1サブステップで食い止める。発散した事実は
+            # diverged フラグとして持ち帰り、呼び出し側で done=True を
+            # 強制する(=次stepで自動リセットされる)。
+            state_is_finite = jp.all(jp.isfinite(d.qpos)) & jp.all(jp.isfinite(d.qvel))
+            d = jax.tree_util.tree_map(
+                lambda new, old: jp.where(state_is_finite, new, old), d, d_prev
+            )
+            return d, jp.logical_not(state_is_finite)
+
+        mjx_data, diverged_flags = jax.lax.scan(
+            physics_step, state.pipeline_state, (), length=RobotConfig.CONTROL_DECIMATION
+        )
+        physics_diverged = jp.any(diverged_flags)
         
         was_disturbed = jp.array(is_push_step, dtype=jp.bool_)
         disturbance_recovery_steps = jp.where(
@@ -395,7 +422,29 @@ class SenpuuMaruMJXEnv(PipelineEnv):
             training_progress=info.get('training_progress', jp.array(0.0)),
         )
         info['last_potential'] = current_potential
-        
+
+        # [予防追加 2026-09-13] 物理サブステップが発散(NaN/Inf)していた
+        # 場合は無条件でdone=Trueにする。physics_step()側で状態自体は
+        # 直前の有効な値へロールバック済みで安全だが、その「発散直前で
+        # 足止めされた」状態のまま学習を続けさせると、PPOがそれを
+        # 暗黙に「良い状態」と誤学習しかねないため、エピソードを
+        # 明示的に打ち切る(=fall_penaltyと同等に扱われる)。
+        done = jp.logical_or(done, physics_diverged)
+        metrics['physics_diverged'] = physics_diverged.astype(jp.float32)
+
+        # [監査追加 2026-09-13] CBFがtarget_radをどれだけ補正(クランプ)したか
+        # を診断指標として記録する。train_mjx.py の _audit_reward_metrics()
+        # がこれを見て「方策が実行不能な指令を多発させていないか
+        # (Action Distortion)」を検出する。計算本体は safety/cbf.py の
+        # compute_saturation_ratio() に委譲している(CBFの挙動の診断は
+        # CBFクラス自身の責務とするため)。
+        action_saturation = self._cbf.compute_saturation_ratio(
+            target_rad, safe_target_rad, limit_lower, limit_upper
+        )
+        cbf_correction_norm = jp.linalg.norm(safe_target_rad - target_rad)
+        metrics['action_saturation'] = action_saturation
+        metrics['cbf_correction_norm'] = cbf_correction_norm
+
         info['triple_last_action'] = info['double_last_action']
         info['double_last_action'] = info['last_action']
         info['last_action'] = applied_action

@@ -6,6 +6,16 @@ safety/cbf.py — Control Barrier Function (CBF) Safety Layer for Bipedal Postur
 - [CBF-2 FIXED] filter_action() と compute_cbf_penalty() のペナルティ基準を統一
 - [CBF-3 FIXED] double-clamp の実装戦略を明確化（ドキュメント化）
 
+【監査対応 (2026-09-13)】
+- [CBF-4 ADDED] compute_saturation_ratio() を追加。
+  train/train_mjx.py の _audit_reward_metrics() が実施する
+  「Action Distortion」検出(方策が実行不能な指令を多発させていないか、
+  本CBFの制限が過剰に効いていないか)のため、filter_action()による
+  補正量を可動域に対する相対値として返す。envs/mjx_env.py の step()
+  から呼び出され、'action_saturation' として metrics に記録される。
+  (このロジックは元々 mjx_env.py 側に直接書かれていたが、CBFの
+  挙動を診断する処理であるため、責務としてこちらのクラスに移した)
+
 設計理念:
   学習時: 簡易版CBF（クリップ + ペナルティ）で微分可能性を保証
   実機時: 実装 safety/cbf_realworld.py で QP ベースの strict CBF へ切り替え
@@ -175,6 +185,39 @@ class CBFSafetyFilter:
         
         # スケーリング
         return total_penalty * self.cbf_penalty_scale
+
+    def compute_saturation_ratio(
+        self,
+        nominal_action: jp.ndarray,
+        safe_action: jp.ndarray,
+        limit_lower: jp.ndarray,
+        limit_upper: jp.ndarray,
+    ) -> jp.ndarray:
+        """
+        [CBF-4 ADDED, 監査追加 2026-09-13] filter_action() によって
+        どれだけ補正されたかを、可動域に対する相対値として返す診断指標。
+
+        train/train_mjx.py の _audit_reward_metrics() が「Action
+        Distortion」(方策が実行不能な指令を多発させていないか、CBFの
+        制限が過剰に効いていないか)を検出するために使用する。
+
+        compute_cbf_penalty() の direct_penalty(L1ノルムの絶対量)とは
+        異なり、こちらは可動域で正規化した「割合」であるため、
+        関節ごとに可動域が異なっていてもしきい値判定がしやすい。
+
+        0.0 = 無補正 (nominal_action がそのまま安全域内)
+        1.0 = 可動域いっぱいまで補正された (最大級の介入)
+
+        Args:
+            nominal_action: RL の提案アクション [rad]
+            safe_action: filter_action() で制限されたアクション [rad]
+            limit_lower / limit_upper: 関節可動域 [rad]
+
+        Returns:
+            saturation_ratio: スカラー(全関節平均、[0,1]目安)
+        """
+        action_range = jp.maximum(limit_upper - limit_lower, 1e-6)
+        return jp.mean(jp.abs(safe_action - nominal_action) / action_range)
     
     def compute_cbf_penalty_legacy(
         self,

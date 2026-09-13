@@ -44,6 +44,25 @@ v2.1 (2026-09 ISSUE-1/3 修正)
    com_accel = data.qacc[0:3] がワールド座標系であることを
    コメントで明示。MuJoCo標準規約（free joint の並進は world frame）
    に準拠していることを記録し、実装変更時の引き継ぎ誤りを防止。
+
+================================================================================
+v2.2 (2026-09-13 報酬ハッキング監査 対応)
+================================================================================
+[監査追加] compute_unified_stability_index() の戻り値に
+   'metrics_are_finite' フラグを追加した。envs/mjx_rewards.py の
+   reward_is_finite (1.0=正常, 0.0=非有限値検出) と同じ設計思想で、
+   本ファイルの幾何計算(CP/ZMP/バランス/姿勢マージン)自体が
+   NaN/Infを産んでいないかを自己診断する。train/train_mjx.py の
+   _audit_reward_metrics() がこのフラグを「Metric Corruption」検出の
+   直接的な根拠として利用する。
+
+   背景: 上記v2の[CRITICAL FIX]で説明した「zmp_marginが常に定数1.0を
+   返す死んだ指標」バグは、本ファイルの数式バグと、呼び出し側
+   (mjx_rewards.py)がcom_accelをフォールバック値[0,0,-9.81]で
+   渡していたことの「合わせ技」で発生していた。数式側は修正済みだが、
+   フォールバック分岐自体は防御的に残っているため(qacc取得失敗時の
+   保険)、将来また同様の問題が再発しないよう、両方の可視化を追加した
+   (フォールバック側は mjx_rewards.py の 'com_accel_is_fallback' を参照)。
 ================================================================================
 """
 
@@ -293,6 +312,22 @@ class StabilityMetrics:
             w_orient * orient_margin
         )
 
+        # [監査追加 2026-09-13] 本メソッドの幾何計算自体がNaN/Infを
+        # 産んでいないかの自己診断。envs/mjx_rewards.py の
+        # reward_is_finite と同じ設計思想 (1.0=正常, 0.0=非有限値検出)。
+        # train/train_mjx.py の _audit_reward_metrics() が
+        # 'stability_metrics_finite' として参照する。
+        metrics_are_finite = jp.all(jp.array([
+            jp.all(jp.isfinite(cp_dist)),
+            jp.all(jp.isfinite(cp_margin_norm)),
+            jp.all(jp.isfinite(p_cp)),
+            jp.all(jp.isfinite(zmp_margin)),
+            jp.all(jp.isfinite(zmp_point)),
+            jp.all(jp.isfinite(foot_balance)),
+            jp.all(jp.isfinite(orient_margin)),
+            jp.all(jp.isfinite(stability_index)),
+        ])).astype(jp.float32)
+
         metrics = {
             'cp_dist': cp_dist,
             'cp_margin': cp_margin_norm,
@@ -302,6 +337,7 @@ class StabilityMetrics:
             'foot_balance': foot_balance,
             'orient_margin': orient_margin,
             'stability_index': stability_index,
+            'metrics_are_finite': metrics_are_finite,
         }
 
         return stability_index, metrics

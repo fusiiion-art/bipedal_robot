@@ -6,10 +6,16 @@
     (--target_klはepoch内early stoppingではなく、Adaptive LR制御に接続される)
   - checkpoint保存 (best/worst/final/last) と学習曲線ログ (log.json)
   - NaN/Inf検出による即時停止 (改良規約 §18)
+  - 報酬ハッキング・学習破綻の監査 (非致命的、警告のみ)
+    実機投入前に「シミュレーション学習が正当な報酬最大化をしているか」
+    「報酬関数の設計ミスによる異常学習が起きていないか」を検出する。
+    NaN/Infと違い致命的ではないため学習は止めず、
+    log/<exp_name>/version_*/REWARD_AUDIT_ALERTS.txt に警告を蓄積する。
 
 主要な関数:
   - parse_args(): CLI引数パース (--seed, --target_kl, --exp_name 等)
-  - progress_callback(): 学習中の進捗表示・ログ保存・NaN検出 (train()内部で定義)
+  - _audit_reward_metrics(): 報酬ハッキング・学習破綻の検出 (5項目)
+  - progress_callback(): 学習中の進捗表示・ログ保存・NaN検出・報酬監査 (main()内部で定義)
   - main() 相当のスクリプト本体: 環境構築 → PPO学習 → checkpoint保存
 
 使用例:
@@ -151,6 +157,220 @@ from robot.config import RobotConfig
 from envs.mjx_env import SenpuuMaruMJXEnv  # noqa: F401 (Brax環境登録のため)
 from envs.training_wrapper import TrainingProgressWrapper
 
+# ============================================================================
+# [監査追加 2026-09-13] 報酬ハッキング・学習破綻の検出
+# ============================================================================
+# 実機計測にはまだ入っていない段階で、シミュレーション学習が
+# 「正当な報酬最大化」をしているか、報酬関数の設計ミス(reward hacking)や
+# 実装バグによる異常な学習が起きていないかを検証するための追加監査。
+#
+# 既存のNaN/Inf検出(改良規約 §18、上のprogress_callback内)とは異なり、
+# ここでの検出は致命的エラーではなく「疑わしい兆候」の警告であるため、
+# raiseはせず学習を継続する。検出結果は
+# log/<exp_name>/version_*/REWARD_AUDIT_ALERTS.txt に蓄積され、
+# 学習終了後にサマリーが表示される。
+#
+# 検出項目:
+#   1. Reward Exploitation  - 単一の報酬成分(r_cp, r_recovery, r_upright,
+#                              r_com_stab, disturbance_recovery_bonus,
+#                              pbrs_reward, alive)が不合理に大きくないか
+#   2. Shaping Mismatch     - 高報酬なのに姿勢系の正報酬(r_upright,
+#                              r_com_stab, both_feet_contact)が乏しい、
+#                              または total_penalty が total_reward を
+#                              圧倒していないか
+#   3. Metric Corruption    - stability_index が [0,1] の範囲外、
+#                              zmp_margin が直近N回連続でほぼ一定値
+#                              (envs/stability_metrics.py の計算が
+#                              死んでいる可能性)、または同ファイルが
+#                              自己申告する stability_metrics_finite
+#                              フラグ(NaN/Inf自己診断)がFalse
+#   4. Potential Decay      - potential が増加しているのに pbrs_reward が
+#                              大きく負(compute_potential()の符号ミス等)
+#   5. Action Distortion    - CBFによるaction_saturationが高い
+#                              (envs/mjx_env.py 及び safety/cbf.py の
+#                              compute_saturation_ratio() 参照。方策が
+#                              実行不能な指令を多発させている、または
+#                              CBF/可動域制限が過剰に効いている可能性)
+#   6. Sensor/Kinematics Fallback - envs/mjx_rewards.py の com_accel が
+#                              qacc取得失敗によるフォールバック値
+#                              [0,0,-9.81]を使用中(com_accel_is_fallback)。
+#                              stability_metrics.py のv2 [CRITICAL FIX]
+#                              で説明されている「zmp_marginが死んだ指標に
+#                              なる」バグの片割れの原因だったため、
+#                              本番での再発を監視する。
+#
+# 依存するmetricsキー (envs/mjx_rewards.py, envs/mjx_env.py,
+# envs/stability_metrics.py, safety/cbf.py で提供):
+#   total_reward, total_penalty, stability_index, zmp_margin, r_upright,
+#   r_com_stab, both_feet_contact, r_cp, r_recovery,
+#   disturbance_recovery_bonus, pbrs_reward, alive, potential,
+#   action_saturation, stability_metrics_finite, com_accel_is_fallback
+# ============================================================================
+
+REWARD_AUDIT_THRESHOLDS = {
+    'exploitation_abs_max': 50.0,   # 各報酬成分の絶対値の上限目安
+    'shaping_high_reward': 10.0,    # これ以上の報酬でpositive componentが乏しいと疑う
+    'shaping_low_positive': 1.0,
+    'shaping_severe_negative': -100.0,
+    'stability_index_max': 1.05,    # [0,1]からの逸脱許容
+    'metric_frozen_window': 10,     # 直近何件で「固定値」と判定するか
+    'metric_frozen_std': 1e-6,
+    'action_saturation_max': 0.5,   # CBF補正の平均飽和率(50%)
+}
+
+
+def _find_metric_key(metrics: dict, suffix: str):
+    """Brax集計後のキー(例 'eval/episode_metrics/xxx')から末尾一致で探す。
+    既存の reward_is_finite 探索(このファイル内、progress_callback参照)と
+    同じ方式に合わせている。"""
+    for key in metrics.keys():
+        if key == suffix or key.endswith(suffix):
+            return key
+    return None
+
+
+def _audit_reward_metrics(metrics_dict: dict, metrics_history: list) -> list:
+    """1ステップ分のmetrics_dict(既にfloat化済み)を検査し、報酬ハッキングや
+    学習破綻の兆候をチェックする。致命的ではないため raise はしない。
+
+    Args:
+        metrics_dict: progress_callback内で構築される、その時点のfloat化
+            済みmetrics辞書 (まだmetrics_historyには追加する前のもの)。
+        metrics_history: これまでの metrics_dict のリスト(現在のステップは
+            含まない)。Metric CorruptionやPotential Decayのトレンド検出に使う。
+
+    Returns:
+        alerts: 検出されたアラートメッセージのリスト(空なら異常なし)。
+    """
+    alerts = []
+    th = REWARD_AUDIT_THRESHOLDS
+
+    def _get(suffix, default=0.0):
+        key = _find_metric_key(metrics_dict, suffix)
+        return metrics_dict[key] if key is not None else default
+
+    total_reward = _get('total_reward', metrics_dict.get('reward', 0.0))
+    total_penalty = _get('total_penalty', 0.0)
+    stability_index = _get('stability_index', 0.5)
+    r_upright = None
+    r_upright_key = _find_metric_key(metrics_dict, 'r_upright')
+    if r_upright_key is not None:
+        r_upright = metrics_dict[r_upright_key]
+    r_com_stab = _get('r_com_stab', 0.0)
+    both_feet_contact = _get('both_feet_contact', 0.0)
+
+    # --- 1. Reward Exploitation ---
+    component_suffixes = [
+        'r_cp', 'r_recovery', 'r_upright', 'r_com_stab',
+        'disturbance_recovery_bonus', 'pbrs_reward', 'alive',
+    ]
+    for suffix in component_suffixes:
+        key = _find_metric_key(metrics_dict, suffix)
+        if key is None:
+            continue
+        val = metrics_dict[key]
+        if abs(val) > th['exploitation_abs_max']:
+            alerts.append(
+                f"[Exploitation] 報酬成分 '{key}' が異常に大きい: {val:.2f} "
+                f"(閾値 ±{th['exploitation_abs_max']:.0f})"
+            )
+
+    # --- 2. Shaping Mismatch ---
+    if r_upright is not None:
+        positive_sum = max(r_upright, 0.0) + max(r_com_stab, 0.0) + both_feet_contact
+        if total_reward > th['shaping_high_reward'] and positive_sum < th['shaping_low_positive']:
+            alerts.append(
+                f"[Shaping Mismatch] 高報酬(total_reward={total_reward:.2f})だが"
+                f"姿勢系の正報酬が乏しい(r_upright+r_com_stab+both_feet_contact="
+                f"{positive_sum:.2f})。ペナルティ符号反転や他成分の異常な"
+                f"寄与を疑う。"
+            )
+    if total_reward < th['shaping_severe_negative'] and total_penalty > 0:
+        alerts.append(
+            f"[Shaping Mismatch] 報酬が著しく負(total_reward={total_reward:.2f})、"
+            f"total_penalty={total_penalty:.2f} が報酬設計を圧倒している"
+            f"可能性。mjx_rewards.py の重み(REWARD_WEIGHTS)を確認。"
+        )
+
+    # --- 3. Metric Corruption ---
+    if stability_index < 0.0 or stability_index > th['stability_index_max']:
+        alerts.append(
+            f"[Metric Corruption] stability_index が範囲外: "
+            f"{stability_index:.3f} (期待範囲 [0, 1])"
+        )
+    finite_key = _find_metric_key(metrics_dict, 'stability_metrics_finite')
+    if finite_key is not None and metrics_dict[finite_key] < 0.5:
+        alerts.append(
+            "[Metric Corruption] envs/stability_metrics.py の "
+            "compute_unified_stability_index() がNaN/Infを検出 "
+            "(stability_metrics_finite=0)。CP/ZMP/バランス/姿勢マージンの"
+            "いずれかの幾何計算が破綻している。"
+        )
+    window = th['metric_frozen_window']
+    zmp_key = _find_metric_key(metrics_dict, 'zmp_margin')
+    if zmp_key is not None and len(metrics_history) >= window:
+        recent = [m[zmp_key] for m in metrics_history[-window:] if zmp_key in m]
+        if len(recent) >= window and np.std(recent) < th['metric_frozen_std']:
+            alerts.append(
+                f"[Metric Corruption] zmp_margin が直近{window}回連続で"
+                f"ほぼ一定値({metrics_dict[zmp_key]:.6f}) — "
+                f"envs/stability_metrics.py の計算が死んでいる可能性"
+                f"(過去のcompute_zmp_marginバグ再発等)。"
+            )
+
+    # --- 4. Potential Decay ---
+    pot_key = _find_metric_key(metrics_dict, 'potential')
+    pbrs_key = _find_metric_key(metrics_dict, 'pbrs_reward')
+    if pot_key is not None and pbrs_key is not None and len(metrics_history) >= 1:
+        prev = metrics_history[-1]
+        if pot_key in prev:
+            delta_potential = metrics_dict[pot_key] - prev[pot_key]
+            pbrs_val = metrics_dict[pbrs_key]
+            if delta_potential > 0.1 and pbrs_val < -2.0:
+                alerts.append(
+                    f"[Potential Decay] potentialは増加({delta_potential:+.3f})"
+                    f"だが pbrs_reward が大きく負({pbrs_val:.2f})。"
+                    f"envs/mjx_rewards.py の compute_potential() や "
+                    f"discounting(gamma)を確認。"
+                )
+
+    # --- 5. Action Distortion ---
+    sat_key = _find_metric_key(metrics_dict, 'action_saturation')
+    if sat_key is not None and metrics_dict[sat_key] > th['action_saturation_max']:
+        alerts.append(
+            f"[Action Distortion] CBFによるアクション補正の飽和率が高い: "
+            f"{metrics_dict[sat_key]*100:.1f}% — 方策が実行不能な指令を"
+            f"多発させているか、safety/cbf.py の制限が過剰に効いている"
+            f"可能性。"
+        )
+
+    # --- 6. Sensor/Kinematics Fallback ---
+    fallback_key = _find_metric_key(metrics_dict, 'com_accel_is_fallback')
+    if fallback_key is not None and metrics_dict[fallback_key] > 0.5:
+        alerts.append(
+            "[Sensor Fallback] com_accel が qacc 取得失敗によりフォール"
+            "バック値[0,0,-9.81]を使用中。envs/mjx_rewards.py の compute() "
+            "内、nq/qacc の条件分岐を確認。ZMPが重心追従に退化し、外乱下の"
+            "不安定性を過小評価している可能性がある(stability_metrics.py "
+            "のv2 changelog参照)。"
+        )
+
+    # [予防追加 2026-09-13] envs/mjx_env.py の physics_step ロールバック
+    # 機構が実際に発動した頻度を記録する。ロールバックにより学習自体は
+    # 汚染されないが、頻発する場合はカリキュラム(外乱強度)や物理タイム
+    # ステップ・ソルバー設定が実際の限界に近いことを示すシグナルになる。
+    diverged_key = _find_metric_key(metrics_dict, 'physics_diverged')
+    if diverged_key is not None and metrics_dict[diverged_key] > 0.5:
+        alerts.append(
+            "[Physics Divergence] 物理サブステップがNaN/Infに発散し、"
+            "envs/mjx_env.py のロールバック機構が作動した(エピソードは"
+            "安全に終了済み)。頻発する場合は外乱の強さ・timestep・"
+            "solver設定の見直しを検討。"
+        )
+
+    return alerts
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp_name", type=str, default="", help="Experiment subfolder under log. Leave empty to write directly to log/version_x.")
@@ -268,6 +488,10 @@ def main():
     worst_reward = float('inf')
     current_params = None
     metrics_history = []
+    # [監査追加 2026-09-13] 報酬ハッキング監査(_audit_reward_metrics)の
+    # 検出件数を種類別に集計する。学習終了後にサマリー表示する。
+    reward_audit_alert_counts = {}
+    reward_audit_total_alerts = 0
     
     def policy_params_callback(current_step, make_policy, params):
         import pickle
@@ -282,6 +506,7 @@ def main():
     def progress_callback(num_steps, metrics):
         import pickle
         nonlocal best_reward, worst_reward
+        nonlocal reward_audit_alert_counts, reward_audit_total_alerts
         reward = metrics.get('eval/episode_reward', metrics.get('training/total_reward', float('nan')))
 
         # --- NaN/Inf 即時停止チェック（改良規約 §18: 即時停止条件） ---
@@ -377,6 +602,23 @@ def main():
             if k == "training_progress":
                 continue
             metrics_dict[k] = float(v.item() if hasattr(v, 'item') else v)
+        # --- 報酬ハッキング・学習破綻の監査 (非致命的、警告のみ) ---
+        # metrics_history にはまだ現在のステップを追加していないため、
+        # ここでは「これまでの履歴 vs 現在のステップ」の比較として機能する。
+        reward_audit_alerts = _audit_reward_metrics(metrics_dict, metrics_history)
+        if reward_audit_alerts:
+            reward_audit_total_alerts += len(reward_audit_alerts)
+            print(f"\n⚠️  [Reward Audit] Step {num_steps}: "
+                  f"{len(reward_audit_alerts)}件の異常兆候を検出", flush=True)
+            with open(run_dir / "REWARD_AUDIT_ALERTS.txt", "a") as f:
+                f.write(f"\n[Step {num_steps}]\n")
+                for alert in reward_audit_alerts:
+                    print(f"   - {alert}", flush=True)
+                    f.write(f"  - {alert}\n")
+                    # カテゴリ別カウント (例: "[Exploitation] ..." → "Exploitation")
+                    category = alert.split(']', 1)[0].lstrip('[')
+                    reward_audit_alert_counts[category] = reward_audit_alert_counts.get(category, 0) + 1
+
         metrics_history.append(metrics_dict)
         
         with open(run_dir / "log.json", "w") as f:
@@ -455,7 +697,35 @@ def main():
 
     elapsed_time = time.time() - start_time
     print(f"Training finished in {elapsed_time/60:.1f} minutes!")
-    
+
+    # --- 報酬ハッキング監査サマリー ---
+    # 実機投入前に「この学習は信頼してよいか」を判断するための最終報告。
+    # 詳細な各アラートは REWARD_AUDIT_ALERTS.txt を参照。
+    summary_lines = []
+    if reward_audit_total_alerts > 0:
+        summary_lines.append(
+            f"⚠️  Reward Audit: 学習中に {reward_audit_total_alerts} 件の"
+            f"異常兆候を検出しました。"
+        )
+        for category, count in sorted(
+            reward_audit_alert_counts.items(), key=lambda x: -x[1]
+        ):
+            summary_lines.append(f"   - {category}: {count}件")
+        summary_lines.append(
+            f"   詳細: {run_dir / 'REWARD_AUDIT_ALERTS.txt'}"
+        )
+        summary_lines.append(
+            "   実機投入前に、上記カテゴリに対応する報酬関数・安定性"
+            "指標・CBF実装を確認することを推奨します。"
+        )
+    else:
+        summary_lines.append(
+            "✅ Reward Audit: 学習全体を通して異常兆候は検出されませんでした。"
+        )
+    print("\n" + "\n".join(summary_lines))
+    with open(run_dir / "REWARD_AUDIT_SUMMARY.txt", "w") as f:
+        f.write("\n".join(summary_lines) + "\n")
+
     # 4. パラメータ保存
     import pickle
     model_path = os.path.join(run_dir, "final_params.pkl")

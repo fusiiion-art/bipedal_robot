@@ -218,8 +218,19 @@ class MJXRewardSystem:
         base_qacc = getattr(data, 'qacc', None)
         if base_qacc is not None and self._nq >= 7:
             com_accel = base_qacc[0:3]
+            # [監査追加 2026-09-13] 通常経路(qacc取得成功)
+            com_accel_is_fallback = jp.array(0.0)
         else:
             com_accel = jp.array([0.0, 0.0, -9.81])
+            # [監査追加 2026-09-13] envs/stability_metrics.py のv2
+            # [CRITICAL FIX]で説明されている「zmp_marginが死んだ指標に
+            # なる」バグの片割れが、まさにこのフォールバック分岐だった
+            # (このcom_accelではXY成分が常に0になるため、ZMPが
+            # 重心位置に退化し、動的な不安定性を反映できなくなる)。
+            # 数式自体は修正済みだが、この分岐が本番で有効化されていないか
+            # train/train_mjx.py の _audit_reward_metrics() が
+            # 'com_accel_is_fallback' として監視する。
+            com_accel_is_fallback = jp.array(1.0)
 
         # --- 2. 足裏位置と相対高さの計算 (Contract Violation B 修正) ---
         left_foot_pos = data.xpos[self._left_foot_id]
@@ -425,6 +436,22 @@ class MJXRewardSystem:
         # 学習ループの外側(非JIT領域)でこのフラグを見て停止判定を行う。
         reward_is_finite = jp.all(jp.isfinite(total_reward)).astype(jp.float32)
 
+        # [予防追加 2026-09-13] 上のreward_is_finiteは「検出」のみで、
+        # 従来はこのフラグを立てるだけで total_reward 自体は無害化されて
+        # いなかった。jp.clip() は NaN を素通りさせる(NaNとの比較は
+        # IEEE754で常にFalseになるため、np.clip(nan, lo, hi) == nan)。
+        # そのため done=False の場合、非有限な報酬がそのままPPOの損失
+        # 計算(GAEの逆方向再帰など)に流れ込み、1ステップの数値破綻が
+        # バッチ全体・トラジェクトリ全体を汚染し得た。
+        #
+        # ここで明示的に安全値へ置換し(数値破綻を転倒と同等に扱う)、
+        # かつエピソードを強制終了させる。物理状態自体の発散は
+        # envs/mjx_env.py 側の physics_step ロールバックで別途防止して
+        # いるため、ここは「それでも報酬計算自体がNaNを産んだ場合」の
+        # 最終防衛ラインとして機能する。
+        done = jp.logical_or(done, reward_is_finite < 0.5)
+        total_reward = jp.where(reward_is_finite > 0.5, total_reward, w['fall_penalty'])
+
         total_reward = jp.clip(total_reward, -300.0, 300.0)
         total_reward = jp.where(done, w['fall_penalty'], total_reward)
 
@@ -442,6 +469,11 @@ class MJXRewardSystem:
             'r_cp': r_capture_point,
             'r_recovery': r_recovery,
             'r_com_stab': r_com_stab,
+            # [監査追加 2026-09-13] train_mjx.py の _audit_reward_metrics()
+            # がShaping Mismatch(高報酬なのに姿勢系の正報酬が乏しい)を
+            # 検出するために必要。r_uprightはtotal_reward計算に既に
+            # 使われているが、従来metricsに含まれておらず監査できなかった。
+            'r_upright': r_upright,
             'both_feet_contact': r_both_feet_contact,
             'pbrs_reward': r_pbrs,
             'potential': current_potential,
@@ -455,6 +487,12 @@ class MJXRewardSystem:
             'barrier_torque': p_barrier_torque,
             # NaN/Inf診断用フラグ (1.0=正常, 0.0=非有限値を検出)
             'reward_is_finite': reward_is_finite,
+            # [監査追加 2026-09-13] envs/stability_metrics.py の幾何計算
+            # 自体の非有限値検出フラグ (同ファイルのv2.2changelog参照)。
+            'stability_metrics_finite': stability_metrics['metrics_are_finite'],
+            # [監査追加 2026-09-13] com_accelがqacc取得失敗によるフォール
+            # バック値[0,0,-9.81]を使っているか (1.0=フォールバック中)。
+            'com_accel_is_fallback': com_accel_is_fallback,
         }
 
         return total_reward, done, metrics, current_potential
