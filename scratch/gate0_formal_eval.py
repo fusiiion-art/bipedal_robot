@@ -124,8 +124,9 @@ def load_checkpoint_and_make_policy(checkpoint_path: Path):
     
     params_stripped = jax.tree_util.tree_map(strip_leading_dim, params)
     
-    # deterministic=False で policy を作る（stochastic sampling）
-    policy_fn = jax.jit(make_policy(params_stripped, deterministic=False))
+    # Gate 0 formal eval is the main pass/fail path and must match the project protocol:
+    # deterministic evaluation is the primary metric; stochastic sampling is only a reference.
+    policy_fn = jax.jit(make_policy(params_stripped, deterministic=True))
     
     return policy_fn, params_stripped
 

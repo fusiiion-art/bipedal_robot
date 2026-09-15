@@ -26,9 +26,12 @@ class RobotConfig:
 
     # --- 1.1. FSR Hardware Layout ---
     # 実機ではTeensy側で接地判定するため、位置はシミュレーション専用。
+    # MuJoCo の <sensor> は IMU(gyro/accel/quat) の後に 8ch FSR touch が
+    # 連続して並ぶ。XML では left-foot 4ch → right-foot 4ch の順に宣言されているため、
+    # ここも同じ順に合わせる。左右の足の座標は左右対称となるよう、右足だけ X 方向を反転する。
     FSR_POSITIONS = np.array([
-        [-0.08, -0.04], [0.08, -0.04], [-0.08, 0.04], [0.08, 0.04],  # Right foot
-        [-0.08,  0.04], [0.08,  0.04], [-0.08, -0.04], [0.08, -0.04],  # Left foot
+        [0.012, 0.027], [-0.012, 0.027], [0.012, -0.070], [-0.012, -0.070],  # Left foot, sensor order = FL FR BL BR
+        [-0.012, 0.027], [0.012, 0.027], [-0.012, -0.070], [0.012, -0.070],  # Right foot, sensor order = FL FR BL BR (mirrored)
     ])
     FSR_CONTACT_THRESHOLD = 0.5
     

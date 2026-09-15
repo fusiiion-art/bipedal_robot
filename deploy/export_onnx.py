@@ -5,7 +5,6 @@ import argparse
 import shutil
 
 import jax
-import jax.numpy as jp
 import tensorflow as tf
 from jax.experimental import jax2tf
 from brax.training.agents.ppo import networks as ppo_networks
@@ -32,9 +31,10 @@ def load_brax_inference_fn(pkl_path, obs_dim, action_dim):
     )
     
     make_inference_fn = ppo_networks.make_inference_fn(ppo_network)
-    inf_fn = make_inference_fn(params)
+    inf_fn = make_inference_fn(params, deterministic=True)
     
     def predict(obs):
+        # Deterministic export should not sample a stochastic action with a fixed PRNG seed.
         dummy_rng = jax.random.PRNGKey(0)
         action, _ = inf_fn(obs, dummy_rng)
         return action

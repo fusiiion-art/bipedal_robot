@@ -113,11 +113,15 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         self.latency_steps = latency_steps
         
         actuator_to_qpos_list = []
+        actuator_to_qvel_list = []
         for act_i in range(sys_mj_model.nu):
             jnt_id = sys_mj_model.actuator_trnid[act_i][0]
             qpos_adr = sys_mj_model.jnt_qposadr[jnt_id]
+            qvel_adr = sys_mj_model.jnt_dofadr[jnt_id]
             actuator_to_qpos_list.append(qpos_adr)
+            actuator_to_qvel_list.append(qvel_adr)
         self._actuator_to_qpos_idx = jp.array(actuator_to_qpos_list, dtype=jp.int32)
+        self._actuator_to_qvel_idx = jp.array(actuator_to_qvel_list, dtype=jp.int32)
         
         from envs.mjx_rewards import MJXRewardSystem
         left_foot_id = mujoco.mj_name2id(sys_mj_model, mujoco.mjtObj.mjOBJ_BODY, 'doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidariaikabu_hidariashiura_hidariashiura-1')
@@ -159,6 +163,26 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         
         return jp.clip(scale, 0.0, 1.0)
 
+    def _apply_domain_randomization(self, model, mass_scale, fric_scale, com_offset):
+        """Domain randomization を物理モデルに反映する。
+
+        旧実装では乱数値を privileged observation にのみ保存しており、
+        MJX の body_mass / geom_friction / inertial COM に反映されていなかった。
+        これにより DR が「観測上のメタ情報」だけに留まり、実際の物理挙動には効かない。
+        """
+        randomized = model
+
+        if hasattr(model, 'body_mass'):
+            randomized = randomized.replace(body_mass=jp.asarray(model.body_mass) * mass_scale)
+        if hasattr(model, 'geom_friction'):
+            randomized = randomized.replace(geom_friction=jp.asarray(model.geom_friction) * fric_scale)
+        if hasattr(model, 'body_ipos') and model.body_ipos.shape[0] > 0:
+            body_ipos = jp.asarray(model.body_ipos).copy()
+            body_ipos = body_ipos.at[0].add(jp.asarray(com_offset, dtype=body_ipos.dtype))
+            randomized = randomized.replace(body_ipos=body_ipos)
+
+        return randomized
+
     def reset(self, rng: jax.Array) -> State:
         rng, rng_noise, rng_priv = jax.random.split(rng, 3)
         
@@ -166,6 +190,10 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         mass_scale = jax.random.uniform(key_mass, shape=(), minval=RobotConfig.RANDOM_MASS_SCALE[0], maxval=RobotConfig.RANDOM_MASS_SCALE[1])
         fric_scale = jax.random.uniform(key_fric, shape=(), minval=RobotConfig.RANDOM_FRICTION[0], maxval=RobotConfig.RANDOM_FRICTION[1])
         com_offset = jax.random.uniform(key_com, shape=(3,), minval=RobotConfig.RANDOM_COM_OFFSET[0], maxval=RobotConfig.RANDOM_COM_OFFSET[1])
+
+        # 物理モデルへ反映してからリセットし、各episodeでDRが実際に効くようにする。
+        self._mjx_model = self._apply_domain_randomization(self._mjx_model, mass_scale, fric_scale, com_offset)
+        self._reward_system._model = self._mjx_model
         
         servo_temp = jax.random.uniform(key_temp, shape=(self._mjx_model.nu,), minval=RobotConfig.RANDOM_TEMP[0], maxval=RobotConfig.RANDOM_TEMP[1])
         supply_volt = jax.random.uniform(key_volt, shape=(1,), minval=RobotConfig.RANDOM_VOLT[0], maxval=RobotConfig.RANDOM_VOLT[1])
@@ -181,8 +209,9 @@ class SenpuuMaruMJXEnv(PipelineEnv):
             default_angles = jp.array(RobotConfig.DEFAULT_JOINT_ANGLES[:num_act])
             target_indices = self._actuator_to_qpos_idx[:num_act]
             qpos = qpos.at[target_indices].set(default_angles)
-            
-            qpos = qpos.at[0:3].set(jp.array([0.0, 0.0, 0.1773]))
+
+            base_position = jp.array([0.0, 0.0, 0.1773], dtype=jp.float32) + com_offset
+            qpos = qpos.at[0:3].set(base_position)
             qpos = qpos.at[3:7].set(jp.array([1.0, 0.0, 0.0, 0.0]))
             
         mjx_data = mjx_data.replace(qpos=qpos, qvel=jp.zeros(self._mjx_model.nv))
@@ -213,7 +242,10 @@ class SenpuuMaruMJXEnv(PipelineEnv):
             'was_disturbed': jp.array(False),
             'disturbance_impulse': jp.zeros(3),  # [FIX] 力積の記録領域を初期化
             'disturbance_recovery_steps': jp.array(1000),
-            'training_progress': jp.array(0.0),
+            # Direct eval / checkpoint validation should not act like an uninitialized training run.
+            # A zero progress value suppresses the entire soft-penalty branch and makes the eval path
+            # behave differently from the training objective.
+            'training_progress': jp.array(1.0),
             '_env_steps': jp.array(0, dtype=jp.int32),
             'terminated': jp.array(False),
             'truncated': jp.array(False),
@@ -243,6 +275,7 @@ class SenpuuMaruMJXEnv(PipelineEnv):
             # 一致させる必要がある(reset/step間でmetrics辞書の
             # キー集合・shapeが異なるとjax.lax.scan等でエラーになるため)。
             'r_upright': zero,
+            'reward_is_finite': zero,
             'action_saturation': zero, 'cbf_correction_norm': zero,
             # [監査追加 2026-09-13] stability_metrics.py / mjx_rewards.py
             # 側で追加した診断フラグとpytree構造を一致させる。
@@ -430,6 +463,7 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         # 暗黙に「良い状態」と誤学習しかねないため、エピソードを
         # 明示的に打ち切る(=fall_penaltyと同等に扱われる)。
         done = jp.logical_or(done, physics_diverged)
+        reward = jp.where(physics_diverged, RobotConfig.REWARD_WEIGHTS['fall_penalty'], reward)
         metrics['physics_diverged'] = physics_diverged.astype(jp.float32)
 
         # [監査追加 2026-09-13] CBFがtarget_radをどれだけ補正(クランプ)したか
@@ -480,6 +514,17 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         return state.replace(pipeline_state=mjx_data, obs=obs, reward=reward,
                              done=done.astype(jp.float32), metrics=metrics, info=info)
 
+    def _extract_fsr_sensor_data(self, data: mjx.Data) -> jax.Array:
+        nsensor = getattr(self._mjx_model, 'nsensordata', 0)
+        if nsensor >= 18:
+            return data.sensordata[10:18]
+        if nsensor >= 8:
+            return data.sensordata[-8:]
+        if nsensor > 0:
+            pad_len = 8 - nsensor
+            return jp.concatenate([data.sensordata, jp.zeros(pad_len)])
+        return jp.zeros(8)
+
     def _get_obs(self, data: mjx.Data, info: Dict[str, Any], rng: jax.Array) -> Tuple[jax.Array, Dict[str, Any]]:
         subtree_com = getattr(data, 'subtree_com', None)
         if subtree_com is not None:
@@ -495,8 +540,8 @@ class SenpuuMaruMJXEnv(PipelineEnv):
             base_quat = data.qpos[3:7]
             base_lin_vel = data.qvel[0:3]
             base_ang_vel = data.qvel[3:6]
-            joint_pos = data.qpos[7:]
-            joint_vel = data.qvel[6:]
+            joint_pos = data.qpos[self._actuator_to_qpos_idx]
+            joint_vel = data.qvel[self._actuator_to_qvel_idx]
         else:
             base_pos = base_quat = base_lin_vel = base_ang_vel = jp.zeros(3)
             base_quat = jp.array([1., 0., 0., 0.])
@@ -504,16 +549,8 @@ class SenpuuMaruMJXEnv(PipelineEnv):
             joint_vel = data.qvel
             
         rpy = quat_to_euler(base_quat)
-        
-        nsensor = getattr(self._mjx_model, 'nsensordata', 0)
-        if nsensor >= 8:
-            fsr_data = data.sensordata[:8]
-        elif nsensor > 0:
-            pad_len = 8 - nsensor
-            fsr_data = jp.concatenate([data.sensordata, jp.zeros(pad_len)])
-        else:
-            fsr_data = jp.zeros(8)
-            
+        fsr_data = self._extract_fsr_sensor_data(data)
+
         foot_positions = jp.array(RobotConfig.FSR_POSITIONS)
         total_p = jp.sum(fsr_data) + 1e-6
         zmp_x = jp.sum(foot_positions[:, 0] * fsr_data) / total_p

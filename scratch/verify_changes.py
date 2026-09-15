@@ -6,10 +6,10 @@ sys.path.insert(0, '.')
 from robot.config import RobotConfig
 w = RobotConfig.REWARD_WEIGHTS
 print("=== Config Verification ===")
-print(f"  alive weight:        {w['alive']}  (expected: 2.0)")
-print(f"  fall_penalty weight: {w['fall_penalty']}  (expected: -20.0)")
-assert w['alive'] == 2.0, f"alive should be 2.0, got {w['alive']}"
-assert w['fall_penalty'] == -20.0, f"fall_penalty should be -20.0, got {w['fall_penalty']}"
+print(f"  alive weight:        {w['alive']}  (expected: 25.0)")
+print(f"  fall_penalty weight: {w['fall_penalty']}  (expected: -30.0)")
+assert w['alive'] == 25.0, f"alive should be 25.0, got {w['alive']}"
+assert w['fall_penalty'] == -30.0, f"fall_penalty should be -30.0, got {w['fall_penalty']}"
 print("  [OK] Config OK")
 
 # 2. Reward system import

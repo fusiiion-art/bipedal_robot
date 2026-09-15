@@ -104,7 +104,7 @@ def build_inference_fn(params, env):
         return leaf
     
     params_stripped = jax.tree_util.tree_map(_strip_leading_dim, params)
-    return jax.jit(inference_fn(params_stripped))
+    return jax.jit(inference_fn(params_stripped, deterministic=True))
 
 
 def run_interactive(params):

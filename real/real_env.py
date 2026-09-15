@@ -247,10 +247,11 @@ class RealRobotEnv:
         fsr_raw = self.fsr_contacts
         zmp_xy = np.zeros(2)  # 実機ではCoP/ZMPを算出しない
         
-        # ZUPT: FSRが両足とも接地を検出 → 速度をゼロリセット
-        right_contact = np.any(fsr_raw[:4] > 0.5)
-        left_contact = np.any(fsr_raw[4:] > 0.5)
-        if right_contact and left_contact:
+        # XML/Teensy の FSR は [left_foot(4ch), right_foot(4ch)] の順で並ぶ。
+        # そのため、先頭4chが left、後続4chが right である。
+        left_contact = np.any(fsr_raw[:4] > 0.5)
+        right_contact = np.any(fsr_raw[4:] > 0.5)
+        if left_contact and right_contact:
             # 両足接地 = 静止推定 → ドリフトリセット
             self._vel_estimate *= 0.1  # 急なゼロリセットではなく減衰
         

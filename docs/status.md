@@ -4,22 +4,26 @@
 
 ## 現在地
 
-- 完了: FSR実機経路をTeensyオンチップADCの二値接地判定へ統一。実機のMCP3208/MCP6004/SPI依存を削除。
-- 目的確定: 歩行・踏み替えなしで、外乱後も両足接地の直立姿勢を維持する固定足立位。
-- 学習前検証: 固定足設定、両足接地報酬、外乱力レベル／力積／方向数／印加時間の定義を追加。
-- 評価基盤: 成功率、両足接地率、最大足移動量、最大roll/pitch、回復時間、トルク飽和率の集計を追加。
-- PPO基盤: `--seed`／`--target_kl`をCLI化し、`State.done`をterminated限定へ修正。
-- 整理完了: 未使用RMAネットワーク／共有メモリ、旧センサーフュージョン、未使用抽象環境、仕様外地形テスト、旧SPI資料を廃止。学習・実機・評価経路を標準PPO MLPへ統一。
-- 着手中: Phase 0 PPO安定性診断（D-1〜D-5の計測準備）
-- 次: 現行設定を変えずにD-6のGPU Debug runを実行し、KL・終端理由・報酬内訳・deterministic評価を収集
+- 完了: 改良案の優先度高項目として、FSR/IMUのセンサ順序誤りと joint order ABI のミスマッチを修正。
+- 完了: `reset()` / `step()` 間の metrics pytree 構造を揃え、`reward_is_finite` を追加して JAX トレース時の構造不整合を回避。
+- 完了: `RobotConfig.FSR_POSITIONS` を XML の FSR サイト配置に合わせて更新。
+- 完了: DR の本体が観測パラメータだけに留まっていた問題を修正し、`body_mass` / `geom_friction` / `body_ipos` を実際の MJX model に反映させるようにした。
+- 着手中: 学習の本番検証（GPU / WSL 実行）と、残りの設計レビュー項目（reward gating / evaluation freeze / runtime regression validation）の確認。
+- 次: 非 packaged shell での最小回帰実行が可能な環境を確保し、DR と eval contract を実行時に確認してから本番検証へ進む。
 
 ## 直近の判定根拠
 
-関連Pythonの構文検査、VS Codeエラー検査、立位設定・外乱設定のWSL上のassert検証、学習CLIの`--seed`／`--target_kl`確認に合格。`--target_kl`はBraxのAdaptive KL学習率制御に接続されているが、epoch内early stoppingではない。pytestはWSL環境にも未インストール。実checkpointによる評価は未実行。
+- `envs/mjx_env.py` の `qpos/qvel` 取得を `actuator_trnid` と `jnt_qposadr` / `jnt_dofadr` ベースに修正し、シミュレーションと実機の関節順序 ABI が揃うようにした。
+- `envs/mjx_rewards.py` の FSR 取得を `sensordata[10:18]`（IMU後の 8ch FSR）へ修正し、左右足の接触判定が実際の XML 順序に合わせるようにした。
+- `reset()` に `reward_is_finite` を追加し、JAX の metrics pytree 構造不一致を抑止した。
+- VS Code の静的エラー検査では 3 ファイルとも `No errors found` となった。
+- 実行確認は、ターミナルが Windows の packaged PowerShell / bash を直接起動できず、`pytest` と Python 実行が sandbox 内で失敗したため未完了。詳細は下記のエスカレーション項目を参照。
 
 ## エスカレーション中の項目
 
-Phase 0未合格。KLスパイクと学習後半の`episode_alive`低下が未解決のため、Gate A以降は保留。`log`配下に評価用checkpointがないため、実checkpointによる診断は未実行。
+- 実行環境の制約: `run_in_terminal` は packaged MSIX の `powershell.exe` / `bash.exe` を起動できず、Python の実行テストが実施できない。
+- このため、`pytest` の成否確認は未実施。現時点では静的検査のみを根拠としている。
+- 次回は、非 packaged な shell / Python 実行環境が使える形に切り替えた上で、最小回帰テストを実行してから本番検証へ進む。
 # 進捗ステータス - Phase 0 PPO安定性検証（2026-08-26～09-01）
 
 最終更新: 2026-09-01 最終更新者: Copilot

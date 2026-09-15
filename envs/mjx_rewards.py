@@ -164,6 +164,18 @@ class MJXRewardSystem:
         val = jp.where(gap <= 0.0, clip_val, val)
         return jp.clip(val, 0.0, clip_val)
 
+    @staticmethod
+    def extract_fsr_sensor_data(model: mjx.Model, data: mjx.Data) -> jax.Array:
+        nsensor = getattr(model, 'nsensordata', 0)
+        if nsensor >= 18:
+            return data.sensordata[10:18]
+        if nsensor >= 8:
+            return data.sensordata[-8:]
+        if nsensor > 0:
+            pad_len = 8 - nsensor
+            return jp.concatenate([data.sensordata, jp.zeros(pad_len)])
+        return jp.zeros(8)
+
     def compute(
         self,
         data: mjx.Data,
@@ -201,8 +213,17 @@ class MJXRewardSystem:
             base_ang_vel = data.qvel[3:6]
             rpy = quat_to_euler(base_quat)
             torques = data.actuator_force
-            joint_pos = data.qpos[7:]
-            joint_vel = data.qvel[6:]
+
+            actuator_to_qpos = jp.array([
+                self._model.jnt_qposadr[self._model.actuator_trnid[i][0]]
+                for i in range(self._model.nu)
+            ], dtype=jp.int32)
+            actuator_to_qvel = jp.array([
+                self._model.jnt_dofadr[self._model.actuator_trnid[i][0]]
+                for i in range(self._model.nu)
+            ], dtype=jp.int32)
+            joint_pos = data.qpos[actuator_to_qpos]
+            joint_vel = data.qvel[actuator_to_qvel]
         else:
             base_pos = jp.zeros(3)
             rpy = jp.zeros(3)
@@ -276,8 +297,17 @@ class MJXRewardSystem:
 
         # --- 6. 高度な安定性メトリクス計算 ---
         has_sensors = data.sensordata.shape[0] > 0
-        left_foot_force = jp.where(has_sensors, jp.clip(jp.mean(jp.abs(data.sensordata[0:4] + 1e-6)), 0.0, 100.0), 0.5)
-        right_foot_force = jp.where(has_sensors, jp.clip(jp.mean(jp.abs(data.sensordata[4:8] + 1e-6)), 0.0, 100.0), 0.5)
+        fsr_data = self.extract_fsr_sensor_data(self._model, data)
+        left_foot_force = jp.where(
+            has_sensors,
+            jp.clip(jp.mean(jp.abs(fsr_data[0:4] + 1e-6)), 0.0, 100.0),
+            0.5,
+        )
+        right_foot_force = jp.where(
+            has_sensors,
+            jp.clip(jp.mean(jp.abs(fsr_data[4:8] + 1e-6)), 0.0, 100.0),
+            0.5,
+        )
         contact_threshold = getattr(RobotConfig, 'FOOT_CONTACT_THRESHOLD', 0.05)
         both_feet_contact = jp.logical_and(
             left_foot_force > contact_threshold,
