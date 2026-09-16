@@ -12,7 +12,7 @@ from brax.training.agents.ppo import networks as ppo_networks
 # append project root to sys path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from robot.config import RobotConfig
-from train.train_mjx import make_policy_network_factory
+from robot.policy_network import make_policy_network_factory
 
 def load_brax_inference_fn(pkl_path, obs_dim, action_dim):
     """

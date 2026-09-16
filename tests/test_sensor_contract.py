@@ -1,4 +1,5 @@
 import numpy as np
+import jax.numpy as jp
 import mujoco
 from mujoco import mjx
 
@@ -59,3 +60,23 @@ def test_domain_randomization_is_applied_to_physics_model():
     assert np.allclose(np.asarray(randomized.body_mass), np.asarray(base_model.body_mass) * mass_scale)
     assert np.allclose(np.asarray(randomized.geom_friction), np.asarray(base_model.geom_friction) * fric_scale)
     assert np.allclose(np.asarray(randomized.body_ipos[0]), np.asarray(base_model.body_ipos[0]) + com_offset)
+
+
+def test_domain_randomization_torque_uses_actuator_qvel_mapping():
+    env = SenpuuMaruMJXEnv()
+    model = mujoco.MjModel.from_xml_path(str(RobotConfig.MUJOCO_MODEL_PATH))
+    qvel = jp.arange(model.nv, dtype=jp.float32) + 1.0
+    dr_damping = jp.arange(model.nu, dtype=jp.float32) + 0.1
+    dr_friction = jp.zeros(model.nu, dtype=jp.float32)
+
+    qfrc = env._apply_joint_dr_torque(
+        jp.zeros(model.nv, dtype=jp.float32),
+        qvel,
+        dr_damping,
+        dr_friction,
+    )
+    expected = np.zeros(model.nv, dtype=np.float32)
+    actuator_qvel = np.asarray(env._actuator_to_qvel_idx)
+    expected[actuator_qvel] = -dr_damping * qvel[actuator_qvel]
+
+    assert np.allclose(np.asarray(qfrc), expected)

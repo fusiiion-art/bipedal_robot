@@ -65,57 +65,12 @@ from brax import envs
 from brax.envs import training as brax_training
 from brax.training.agents.ppo import train as ppo
 from brax.training.agents.ppo import networks as ppo_networks
-from brax.training import distribution as brax_distribution
-
-POLICY_MEAN_CLIP_SCALE = 3.0
-# [KL-1 PROPOSED 2026-09-11] POLICY_MIN_STD を 0.05 → 0.15 に引き上げる提案。
-#
-# 根拠（Brax実ソース brax/training/distribution.py の _NormalDistribution.kl_divergence
-# を直接確認して導出。詳細は docs/status.md の該当セクション参照）:
-#   Braxのkl_mean計算は、20関節分のKLを sum(axis=-1) してからbatch平均を取る実装。
-#   scale(std)がほぼ変化しない場合、1関節あたりの寄与は近似的に
-#     kl_per_joint ≈ Δμ² / (2σ²)
-#   となり、20関節合計は
-#     kl_total ≈ 20 × Δμ² / (2σ²)
-#   σ=0.05（現状）のとき、1関節あたり平均 Δμ≈0.24rad のシフトだけで
-#   kl_total≈230 となり、報告されていたKL=232とほぼ一致することを確認した
-#   （docs/status.md 2026-09-01 記載の値）。
-#   Δμ=0.24rad は、学習初期（コールドスタート、観測正規化とAdaptive-KLの
-#   フィードバックがまだ効いていない最初の数ミニバッチ）では十分あり得る
-#   規模である。
-#
-#   σを0.05→0.15（3倍）に引き上げると、kl_totalは同じΔμに対して
-#   1/9に減少する見込み（232 → 約26）。既にstatus.md 2026-09-01時点で
-#   min_std=0.00283→0.05019への引き上げが KL=18418→232 (98.7%減) を
-#   達成した実績があり、同じ方向の追加調整として位置付けられる。
-#
-#   【重要】この変更は改良規約の「1 iteration = 1変更カテゴリ」に基づき、
-#   PPO最適化系（policy分布パラメータ）の単独変更として提案するもの。
-#   報酬系(mjx_rewards.py)とは同時変更しないこと。
-#   GPU Debug run (D-6) で実測KLトレンドを確認してから正式採用を判断すること。
-#   探索性能(policy_dist_mean_std等)への悪影響がないかも合わせて確認する。
-POLICY_MIN_STD = 0.15
-POLICY_MAX_STD = 3.0
-
-
-def _install_policy_std_cap():
-    """Cap tanh-normal scale while preserving Brax's existing distribution API."""
-    original_create_dist = brax_distribution.NormalTanhDistribution.create_dist
-
-    def clipped_create_dist(self, parameters):
-        loc, scale = jnp.split(parameters, 2, axis=-1)
-        loc = POLICY_MEAN_CLIP_SCALE * (loc / (1.0 + jnp.abs(loc)))
-        scale = (jax.nn.softplus(scale) + self._min_std) * self._var_scale
-        scale = jnp.clip(scale, POLICY_MIN_STD, POLICY_MAX_STD)
-        return brax_distribution._NormalDistribution(loc=loc, scale=scale)
-
-    if not hasattr(brax_distribution, '_NormalDistribution'):
-        raise RuntimeError('Brax distribution API changed: _NormalDistribution is unavailable')
-    brax_distribution.NormalTanhDistribution.create_dist = clipped_create_dist
-    return original_create_dist
-
-
-_install_policy_std_cap()
+from robot.policy_network import (
+    POLICY_MAX_STD,
+    POLICY_MEAN_CLIP_SCALE,
+    POLICY_MIN_STD,
+    make_policy_network_factory,
+)
 
 # Patch brax _unpmap for JAX 0.4+ Multi-GPU safety
 def _safe_unpmap(v):
@@ -386,32 +341,6 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--target_kl", type=float, default=0.02)
     return parser.parse_args()
-
-def make_policy_network_factory(
-    observation_size: int,
-    action_size: int,
-    preprocess_observations_fn=lambda x, _=None: x,
-):
-    """
-    Standard PPO network factory for the fixed-foot standing policy.
-    
-    観測空間の構成 (OBS_DIM):
-      - Base Obs (現在の状態)
-      - Obs/Action History (遅延補償用の履歴バッファ)
-      - Servo Temperature (各関節の温度)
-      - Supply Voltage (電源電圧)
-      
-    The observation already contains measured-sensor equivalents and their
-    short history; no privileged teacher or adaptation network is used.
-    """
-    return ppo_networks.make_ppo_networks(
-        observation_size=observation_size,
-        action_size=action_size,
-        preprocess_observations_fn=preprocess_observations_fn,
-        policy_hidden_layer_sizes=(512, 256, 128),
-        value_hidden_layer_sizes=(512, 256, 128),
-        mean_clip_scale=POLICY_MEAN_CLIP_SCALE,
-    )
 
 def main():
     args = parse_args()

@@ -33,7 +33,6 @@ class RobotConfig:
         [0.012, 0.027], [-0.012, 0.027], [0.012, -0.070], [-0.012, -0.070],  # Left foot, sensor order = FL FR BL BR
         [-0.012, 0.027], [0.012, 0.027], [-0.012, -0.070], [0.012, -0.070],  # Right foot, sensor order = FL FR BL BR (mirrored)
     ])
-    FSR_CONTACT_THRESHOLD = 0.5
     
     # --- 2. Hardware Specs ---
     ROBOT_NAME = "SenpuuMaru_GIY_Type"
@@ -61,7 +60,6 @@ class RobotConfig:
     MOTOR_LPF_ALPHA = 0.8  # 1st-order Low-Pass Filter coefficient for HX-30HM
     
     NUM_JOINTS = len(JOINT_NAMES)
-    INIT_JOINT_ANGLES = np.zeros(NUM_JOINTS)
 
     # --- お手本（Reference Trajectory）使用のトグルスイッチ ---
     # True: サイクロイド歩行軌道に基づく「残差強化学習 (Residual RL)」
@@ -102,8 +100,6 @@ class RobotConfig:
     NOISE_BASE_POS    = 0.1   # [m]  — 実機ではゼロ埋め or VIO推定のためドリフト大
     NOISE_LIN_VEL     = 0.5   # [m/s] — IMU積分だと数秒でm/sオーダーのエラー
     
-    LATENCY_STEPS = 1 # 1Mbps通信なので遅延は少ないはず
-
     RANDOM_MASS_SCALE = [0.97, 1.03]  # Phase 1: DR範囲を縮小して基本直立に集中
     RANDOM_FRICTION = [0.7, 1.1]      # Phase 1: 摩擦変動を控えめに
     RANDOM_COM_OFFSET = [-0.02, 0.02]  # Phase 1: 重心偏差を最小化
@@ -157,8 +153,6 @@ class RobotConfig:
     MAX_FOOT_TRANSLATION = 0.005  # [m], 5 mm 未満を許容
     MAX_FOOT_YAW_ROT = np.deg2rad(3.0)
     MAX_SINGLE_FOOT_LIFT = 0.0
-    ALLOW_ARM_SWING = True
-    ARM_SWING_LIMIT_DEG = 12.0
     FOOT_CONTACT_THRESHOLD = 0.05  # [N] シミュレーション上の各足の最小接触力
     
     # ======================================================
@@ -186,7 +180,6 @@ class RobotConfig:
         "ang_momentum_z": 0.01,
         "ang_momentum_xy": 0.01,
         "cbf": 0.2,
-        "symmetry": 0.0,
         "energy": 0.00005,
         "smoothness": 0.0001,
         "drift": 0.005,

@@ -367,6 +367,12 @@ class TeensySpineIO:
     E-stop 処理を開始できる（30ms 前に検知可能）。
     """
     START_BYTE = 0xA5
+    TELEMETRY_START_BYTE = 0x5A
+    TELEMETRY_PACKET_LENGTH = 73
+    MAX_GYRO_RAD_S = 50.0
+    MAX_LINEAR_ACCEL_M_S2 = 10.0 * 9.80665
+    FSR_MIN = 0.0
+    FSR_MAX = 1.0
     
     def __init__(self, port: str = "/dev/ttyACM0", baudrate: int = 115200, num_servos: int = 20):
         self.port = port
@@ -412,35 +418,47 @@ class TeensySpineIO:
         
         self.ser.write(data)
         
-        raw = self.ser.read(73)
-        if len(raw) >= 73 and raw[0] == 0x5A:
-            self._consecutive_timeouts = 0
-            self.telemetry_timeout_flag = False
-            
-            w, x, y, z = struct.unpack('<4f', raw[1:17])
-            gx, gy, gz = struct.unpack('<3f', raw[17:29])
-            ax, ay, az = struct.unpack('<3f', raw[29:41])
-            fsr_contacts = np.rint(np.clip(np.array(struct.unpack('<8f', raw[41:73])), 0.0, 1.0))
-            
-            quat = np.array([w, x, y, z])
-            norm = np.linalg.norm(quat)
-            if norm >= 0.5 and norm <= 1.5:
-                self.last_imu_data["quat"] = quat / norm
-                
-            self.last_imu_data["gyro"] = np.array([gx, gy, gz])
-            self.last_imu_data["lin_accel"] = np.array([ax, ay, az])
-            self.last_fsr_contacts = fsr_contacts.astype(np.float32)
-            
+        raw = self.ser.read(self.TELEMETRY_PACKET_LENGTH)
+        failure_reason = None
+        if len(raw) < self.TELEMETRY_PACKET_LENGTH:
+            failure_reason = f"incomplete ({len(raw)}/{self.TELEMETRY_PACKET_LENGTH} bytes)"
+        elif raw[0] != self.TELEMETRY_START_BYTE:
+            failure_reason = f"invalid start byte 0x{raw[0]:02x}"
         else:
-            # Rule 18 違反対策: タイムアウトのサイレント無視を廃止
-            self._consecutive_timeouts += 1
-            if len(raw) > 0:
-                print(f"[Warn] Teensy telemetry incomplete: {len(raw)}/73 bytes (Consecutive: {self._consecutive_timeouts})")
+            w, x, y, z = struct.unpack('<4f', raw[1:17])
+            gyro = np.array(struct.unpack('<3f', raw[17:29]), dtype=np.float64)
+            lin_accel = np.array(struct.unpack('<3f', raw[29:41]), dtype=np.float64)
+            fsr_values = np.array(struct.unpack('<8f', raw[41:73]), dtype=np.float64)
+            quat = np.array([w, x, y, z], dtype=np.float64)
+            norm = np.linalg.norm(quat)
+
+            telemetry_is_valid = (
+                np.all(np.isfinite(quat))
+                and 0.5 <= norm <= 1.5
+                and np.all(np.isfinite(gyro))
+                and np.all(np.abs(gyro) <= self.MAX_GYRO_RAD_S)
+                and np.all(np.isfinite(lin_accel))
+                and np.all(np.abs(lin_accel) <= self.MAX_LINEAR_ACCEL_M_S2)
+                and np.all(np.isfinite(fsr_values))
+                and np.all((fsr_values >= self.FSR_MIN) & (fsr_values <= self.FSR_MAX))
+            )
+            if telemetry_is_valid:
+                self._consecutive_timeouts = 0
+                self.telemetry_timeout_flag = False
+                self.last_imu_data["quat"] = quat / norm
+                self.last_imu_data["gyro"] = gyro.astype(np.float32)
+                self.last_imu_data["lin_accel"] = lin_accel.astype(np.float32)
+                self.last_fsr_contacts = np.rint(fsr_values).astype(np.float32)
             else:
-                print(f"[Warn] Teensy telemetry timeout (0 bytes) (Consecutive: {self._consecutive_timeouts})")
-                
+                failure_reason = "telemetry value out of physical range"
+
+        if failure_reason is not None:
+            self._consecutive_timeouts += 1
+            print(
+                f"[Warn] Teensy telemetry rejected: {failure_reason} "
+                f"(Consecutive: {self._consecutive_timeouts})"
+            )
             if self._consecutive_timeouts >= 3:
-                # 30ms (3ステップ連続) 応答がない場合、致命的な異常としてフラグを立てる
                 self.telemetry_timeout_flag = True
             
         return self.last_imu_data, self.last_fsr_contacts, self.servo_temps, self.servo_voltages

@@ -219,32 +219,6 @@ class CBFSafetyFilter:
         action_range = jp.maximum(limit_upper - limit_lower, 1e-6)
         return jp.mean(jp.abs(safe_action - nominal_action) / action_range)
     
-    def compute_cbf_penalty_legacy(
-        self,
-        nominal_action: jp.ndarray,
-        limit_lower: jp.ndarray,
-        limit_upper: jp.ndarray
-    ) -> jp.ndarray:
-        """
-        [DEPRECATED] 旧実装。後方互換性のために保持。
-        
-        【使用禁止】代わりに compute_cbf_penalty(nominal_action, safe_action) を使用。
-        
-        旧実装の問題点:
-        - filter_action() と異なる基準でペナルティ計算
-        - double-counting のリスク
-        
-        このメソッドは近い将来削除される予定です。
-        """
-        safe_lower, safe_upper = self.compute_safe_margins(limit_lower, limit_upper)
-        
-        k = self.softplus_steepness
-        upper_violation = jax.nn.softplus(k * (nominal_action - safe_upper))
-        lower_violation = jax.nn.softplus(k * (safe_lower - nominal_action))
-        
-        return jp.sum(upper_violation + lower_violation) * self.cbf_penalty_scale
-
-
 # ============================================================
 # ユーティリティ関数
 # ============================================================

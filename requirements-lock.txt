@@ -26,6 +26,7 @@ mujoco==3.11.0
 mujoco-mjx==3.11.0
 nest-asyncio==1.6.0
 numpy==2.4.6
+onnxruntime==1.24.1
 opt_einsum==3.4.0
 optax==0.2.8
 orbax-checkpoint==0.12.2
@@ -37,11 +38,14 @@ psutil==7.2.2
 Pygments==2.20.0
 PyOpenGL==3.1.10
 PyYAML==6.0.3
+pyserial==3.5
 rich==15.0.0
 scipy==1.18.0
 setuptools==84.0.0
 simplejson==4.1.1
 tensorboardX==2.6.5
+tensorflow-cpu==2.20.0
+tf2onnx==1.17.0
 tensorstore==0.1.85
 treescope==0.1.10
 trimesh==5.0.0

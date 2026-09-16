@@ -9,14 +9,17 @@ import jax.numpy as jnp
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from train.train_mjx import POLICY_MAX_STD, POLICY_MEAN_CLIP_SCALE, POLICY_MIN_STD
-from brax.training.agents.ppo import networks
+from robot.policy_network import (
+    POLICY_MAX_STD,
+    POLICY_MEAN_CLIP_SCALE,
+    POLICY_MIN_STD,
+    make_policy_network_factory,
+)
 
 
-policy = networks.make_ppo_networks(
+policy = make_policy_network_factory(
     observation_size=4,
     action_size=20,
-    mean_clip_scale=POLICY_MEAN_CLIP_SCALE,
 )
 distribution = policy.parametric_action_distribution
 logits = jnp.concatenate([

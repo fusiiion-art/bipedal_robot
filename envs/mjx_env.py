@@ -100,6 +100,17 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         else:
             sys_brax = mjcf.load(model_path)
             sys_mj_model = mujoco.MjModel.from_xml_path(model_path)
+
+        sys_mj_model.actuator_gainprm[:, 0] = RobotConfig.KP
+        sys_mj_model.actuator_biasprm[:, 1] = -RobotConfig.KP
+        sys_mj_model.actuator_biasprm[:, 2] = -RobotConfig.KD
+        sys_brax = sys_brax.replace(
+            actuator=sys_brax.actuator.replace(
+                gain=jp.full((sys_mj_model.nu,), RobotConfig.KP),
+                bias_q=jp.full((sys_mj_model.nu,), -RobotConfig.KP),
+                bias_qd=jp.full((sys_mj_model.nu,), -RobotConfig.KD),
+            )
+        )
             
         sys_mj_model.opt.timestep = RobotConfig.SIM_DT
         sys_brax = sys_brax.replace(opt=sys_brax.opt.replace(timestep=RobotConfig.SIM_DT))
@@ -182,6 +193,15 @@ class SenpuuMaruMJXEnv(PipelineEnv):
             randomized = randomized.replace(body_ipos=body_ipos)
 
         return randomized
+
+    def _apply_joint_dr_torque(self, qfrc_applied, qvel, dr_damping, dr_friction):
+        if self._mjx_model.nq >= 7:
+            joint_vel = qvel[self._actuator_to_qvel_idx]
+            joint_torque = -dr_damping * joint_vel - dr_friction * jp.sign(joint_vel)
+            return qfrc_applied.at[self._actuator_to_qvel_idx].add(joint_torque)
+
+        joint_torque = -dr_damping * qvel - dr_friction * jp.sign(qvel)
+        return qfrc_applied.add(joint_torque)
 
     def reset(self, rng: jax.Array) -> State:
         rng, rng_noise, rng_priv = jax.random.split(rng, 3)
@@ -403,14 +423,12 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         if self._mjx_model.nq >= 7:
             qfrc_applied = qfrc_applied.at[0:3].set(push_force)
             
-        joint_vel = state.pipeline_state.qvel[6:] if self._mjx_model.nq >= 7 else state.pipeline_state.qvel
-        damping_torque = -info['dr_damping'] * joint_vel
-        friction_torque = -info['dr_friction'] * jp.sign(joint_vel)
-        
-        if self._mjx_model.nq >= 7:
-            qfrc_applied = qfrc_applied.at[6:].add(damping_torque + friction_torque)
-        else:
-            qfrc_applied = qfrc_applied.add(damping_torque + friction_torque)
+        qfrc_applied = self._apply_joint_dr_torque(
+            qfrc_applied,
+            state.pipeline_state.qvel,
+            info['dr_damping'],
+            info['dr_friction'],
+        )
 
         def physics_step(carry, _):
             d_prev = carry
@@ -494,13 +512,6 @@ class SenpuuMaruMJXEnv(PipelineEnv):
             
         info['disturbance_recovery_steps'] = disturbance_recovery_steps
         info['was_disturbed'] = was_disturbed
-        if '_env_steps' not in state.info:
-            info['training_progress'] = jp.clip(
-                jp.asarray(env_steps, dtype=jp.float32) / float(max(RobotConfig.TOTAL_TRAINING_STEPS_ESTIMATE, 1)),
-                0.0,
-                1.0,
-            )
-        
         terminated = done
         truncated = info['step'] >= RobotConfig.MAX_EPISODE_STEPS
         

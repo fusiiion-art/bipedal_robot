@@ -4,6 +4,25 @@
 
 ## 現在地
 
+- 完了: Phase G として未参照の設定項目6件、deprecatedな `compute_cbf_penalty_legacy`、到達不能な `training_progress` 分岐を削除。`LegKinematics`、`no_step_penalty`、`_env_steps` のstep更新は現行経路で使用中のため維持。
+- 完了: Phase Hの具体的改善として、実機のIMU線形加速度をquaternionでワールド座標へ回転して速度推定へ反映。90度回転の数値テストはPASS。
+- 保留: action scale、報酬監査閾値、歩容パラメータ、旧通信経路などの設計判断項目は、仕様合意なしで変更していない。
+- 完了: Phase E として `RobotConfig.KP/KD` をモデルロード時にMuJoCo/MJXの `actuator_gainprm`/`actuator_biasprm` とBraxの `gain`/`bias_q`/`bias_qd` へ反映。
+- 判定: KP/KD契約テストと純MuJoCo Gate 0（10秒、seed=0）はPASS。両足接地率1.0、トルク飽和率0。
+- 完了: Phase C としてDRダンピング/摩擦トルクをactuator順から対応するqvel/qfrc位置へマッピングする処理を修正し、順序契約テストを追加。
+- 判定: センサー契約一式と追加DRトルクテストはPASS。純MuJoCo Gate 0（10秒、seed=0）も `pass=true`、両足接地率1.0、トルク飽和率0。
+- 暫定完了: Phase F として `TeensySpineIO` の73バイト既存プロトコルを維持し、quat/gyro/線形加速度/FSRの有限性・物理範囲検証とlast-good値保持を追加。
+- 判定: Fake Serialによる正常更新・異常パケット拒否・3回連続拒否時の `telemetry_timeout_flag` テストはPASS。
+- 保留: XOR/CRCチェックサム付き74バイト化は、対応するTeensyファームウェアが本リポジトリ外のため、ファームウェア変更後にセットで実施する。
+- 完了: Phase D として方策分布のclip設定とPPO network factoryを `robot/policy_network.py` に集約し、学習・可視化・ONNX exportの3経路を共有参照へ変更。
+- 判定: 方策bounds検証は `max_abs_loc=2.970297`、`min_std=0.150000`、`max_std=3.000000` でPASS。3経路の共有import契約と構文検査もPASS。
+- 未検証: `deploy.export_onnx` の実importとONNX変換は、環境にTensorFlow/tf2onnxが未導入のため未実行。
+- 完了: Phase B として視覚専用geom（`contype=0`, `conaffinity=0`, `group=1`）21件へ `density=0` を適用し、再実行可能な `scripts/fix_visual_mass.py` と質量契約テストを追加。
+- 判定: `tests/test_physical_mass_contract.py` の直接実行は成功。純MuJoCo Gate 0（10秒、seed=0）は `pass=true`、両足接地率1.0、トルク飽和率0、総質量上限6kg以内。
+- 未検証: `pytest` は現環境に未導入のため、全テストスイートは未実行。MJX再学習と既存checkpointの再利用は行わない。
+- 完了: Phase A-1 として ONNX export / 実機ランタイムの依存パッケージを `requirements-lock.txt` に追加。
+- 完了: Phase A-2 として存在しない `envs.base_env` を import する手動GUIスクリプトを削除。
+- 未検証: `pytest` と追加依存4件は現在のWindows環境に未導入のため、実行時確認は保留。
 - 完了: 改良案の優先度高項目として、FSR/IMUのセンサ順序誤りと joint order ABI のミスマッチを修正。
 - 完了: `reset()` / `step()` 間の metrics pytree 構造を揃え、`reward_is_finite` を追加して JAX トレース時の構造不整合を回避。
 - 完了: `RobotConfig.FSR_POSITIONS` を XML の FSR サイト配置に合わせて更新。

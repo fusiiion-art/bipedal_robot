@@ -25,7 +25,7 @@ except ImportError:
     ort = None
 
 from real.real_io import TeensySpineIO
-from robot.math_utils import quat_to_euler
+from robot.math_utils import quat_to_euler, rotate_vector_by_quaternion
 from robot.config import RobotConfig
 from robot.gait_generator import numpy_get_reference_trajectory
 
@@ -241,7 +241,8 @@ class RealRobotEnv:
         # --- lin_vel: ZUPT (Zero-velocity Update) 推定 ---
         # IMU加速度を1ステップ積分して速度を推定し、
         # 接地検出時にドリフトをリセットする
-        self._vel_estimate += lin_accel * self.dt
+        world_accel = rotate_vector_by_quaternion(lin_accel, quat)
+        self._vel_estimate += world_accel * self.dt
         
         # --- 3. FSR接地フラグ (TeensyオンチップADCで判定済み) ---
         fsr_raw = self.fsr_contacts

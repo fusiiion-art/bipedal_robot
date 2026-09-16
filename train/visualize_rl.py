@@ -33,6 +33,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.append(str(REPO_ROOT))
 
 from robot.config import RobotConfig
+from robot.policy_network import make_policy_network_factory
 from envs.mjx_env import SenpuuMaruMJXEnv
 from brax.training.acme import running_statistics
 from brax.training.agents.ppo import networks as ppo_networks
@@ -81,16 +82,6 @@ def get_model_path(exp_name: str, version: int | None, model_name: str) -> Path 
 def load_checkpoint(path: Path):
     with open(path, "rb") as f:
         return CompatibilityUnpickler(f).load()
-
-
-def make_policy_network_factory(observation_size: int, action_size: int, preprocess_observations_fn=lambda x, _=None: x):
-    return ppo_networks.make_ppo_networks(
-        observation_size=observation_size,
-        action_size=action_size,
-        preprocess_observations_fn=preprocess_observations_fn,
-        policy_hidden_layer_sizes=(512, 256, 128),
-        value_hidden_layer_sizes=(512, 256, 128),
-    )
 
 
 def build_inference_fn(params, env):
