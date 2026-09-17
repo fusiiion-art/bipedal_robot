@@ -146,78 +146,6 @@ def quat_to_euler(q) -> np.ndarray:
         return quat_to_euler_numpy(q_np)
 
 
-# ============================================================
-# オイラー角 -> クォータニオン（逆変換）
-# ============================================================
-
-def euler_to_quat_numpy(rpy: np.ndarray) -> np.ndarray:
-    """
-    NumPy版オイラー角からクォータニオンへの変換。
-    
-    Args:
-        rpy: shape=(3,) オイラー角 [roll, pitch, yaw] [rad]
-    
-    Returns:
-        q: shape=(4,) クォータニオン [w, x, y, z]
-    """
-    roll, pitch, yaw = rpy[0], rpy[1], rpy[2]
-    
-    # 半角公式
-    cy = np.cos(yaw * 0.5)
-    sy = np.sin(yaw * 0.5)
-    cp = np.cos(pitch * 0.5)
-    sp = np.sin(pitch * 0.5)
-    cr = np.cos(roll * 0.5)
-    sr = np.sin(roll * 0.5)
-    
-    w = cy * cp * cr + sy * sp * sr
-    x = cy * cp * sr - sy * sp * cr
-    y = sy * cp * sr + cy * sp * cr
-    z = sy * cp * cr - cy * sp * sr
-    
-    return np.array([w, x, y, z])
-
-
-def euler_to_quat_jax(rpy: "jax.Array") -> "jax.Array":
-    """
-    JAX版オイラー角からクォータニオンへの変換（JIT互換）。
-    
-    Args:
-        rpy: shape=(3,) JAX配列 オイラー角 [roll, pitch, yaw] [rad]
-    
-    Returns:
-        q: shape=(4,) JAX配列 クォータニオン [w, x, y, z]
-    """
-    roll, pitch, yaw = rpy[0], rpy[1], rpy[2]
-    
-    # 半角公式
-    cy = jp.cos(yaw * 0.5)
-    sy = jp.sin(yaw * 0.5)
-    cp = jp.cos(pitch * 0.5)
-    sp = jp.sin(pitch * 0.5)
-    cr = jp.cos(roll * 0.5)
-    sr = jp.sin(roll * 0.5)
-    
-    w = cy * cp * cr + sy * sp * sr
-    x = cy * cp * sr - sy * sp * cr
-    y = sy * cp * sr + cy * sp * cr
-    z = sy * cp * cr - cy * sp * sr
-    
-    return jp.array([w, x, y, z])
-
-
-def euler_to_quat(rpy) -> np.ndarray:
-    """
-    オイラー角からクォータニオンへの統一インターフェース。
-    
-    入力配列の型に基づいて、自動的に適切な実装を選択します。
-    """
-    if HAS_JAX and isinstance(rpy, jax.Array):
-        return euler_to_quat_jax(rpy)
-    else:
-        rpy_np = np.asarray(rpy)
-        return euler_to_quat_numpy(rpy_np)
-
 
 # ============================================================
 # その他のユーティリティ関数
@@ -351,11 +279,3 @@ if __name__ == "__main__":
     q_test = np.array([0.7071, 0.7071, 0.0, 0.0])
     rpy_result = quat_to_euler(q_test)
     print(f"Type: {type(rpy_result)}, Value: {rpy_result}")
-    
-    print("\n[Inverse Transform Test]")
-    rpy_original = np.array([0.1, 0.2, 0.3])  # [rad]
-    q_from_rpy = euler_to_quat(rpy_original)
-    rpy_reconstructed = quat_to_euler(q_from_rpy)
-    print(f"Original RPY: {np.degrees(rpy_original)}")
-    print(f"Reconstructed RPY: {np.degrees(rpy_reconstructed)}")
-    print(f"Error: {np.degrees(rpy_original - rpy_reconstructed)}")

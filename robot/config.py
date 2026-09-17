@@ -22,7 +22,6 @@ class RobotConfig:
     # --- 1. Project Paths ---
     BASE_DIR = Path(__file__).resolve().parent.parent
     MUJOCO_MODEL_PATH = BASE_DIR / "assets" / "humanoid" / "humanoid.xml"
-    OUTPUT_DIR = BASE_DIR / "log"
 
     # --- 1.1. FSR Hardware Layout ---
     # 実機ではTeensy側で接地判定するため、位置はシミュレーション専用。
@@ -35,13 +34,11 @@ class RobotConfig:
     ])
     
     # --- 2. Hardware Specs ---
-    ROBOT_NAME = "SenpuuMaru_GIY_Type"
     
     # Actuator: Hiwonder HX-30HM Serial Bus Servo (Magnetic Encoder)
     # Spec: 30kg.cm (11.1V) -> 2.94 N.m
     MOTOR_MAX_TORQUE = 3.0       # [N.m] HX-30HMに合わせて修正
     MOTOR_MAX_VELOCITY = 6.5     # [rad/s] (0.19sec/60deg @11.1V)
-    MOTOR_VOLTAGE = 11.1         # [V]
     
     # 関節定義 (Fusion 360のURDFとIDを一致させること)
     # 旋風丸の本稼働用設定 (20 DOF)
@@ -89,12 +86,6 @@ class RobotConfig:
     KD = 1.0
 
     # --- 4. Sim-to-Real Gap Mitigation ---
-    # センサーノイズ (実測値に合わせて後で調整)
-    NOISE_ANGULAR_POS = np.deg2rad(0.1)  # 磁気エンコーダなので精度UP! ノイズ減
-    NOISE_ANGULAR_VEL = np.deg2rad(1.0)
-    NOISE_IMU_ANGLE   = np.deg2rad(1.0)
-    NOISE_IMU_GYRO    = np.deg2rad(2.0)
-    
     # base_pos / lin_vel の大ノイズ (実機ではIMU積分ドリフトで不正確)
     # 学習時にこれらを「信頼できない」特徴量として扱わせるためのDR
     NOISE_BASE_POS    = 0.1   # [m]  — 実機ではゼロ埋め or VIO推定のためドリフト大
@@ -105,15 +96,10 @@ class RobotConfig:
     RANDOM_COM_OFFSET = [-0.02, 0.02]  # Phase 1: 重心偏差を最小化
     RANDOM_PUSH_MAX_FORCE = 0.0  # Phase 0: Gate 0 / Gate A を先に確定し、外乱導入は後に行う
     DISTURBANCE_CURRICULUM = False  # Phase 0 では外乱を無効化して静止直立を安定化させる
-    PUSH_DIRECTIONS = 8  # 水平方向を8方位で評価
-    PUSH_DURATION_STEPS = 1  # 100Hz制御での印加時間（既定10ms）
-    PUSH_FORCE_LEVELS = [0.0, 1.0, 2.0, 3.0]  # [N] 評価時に明示的に掃引する値
     
     # 熱・電圧のシミュレーションパラメータ
     RANDOM_TEMP = [20.0, 80.0]  # ℃
     RANDOM_VOLT = [9.0, 12.6]   # V
-
-    PRIVILEGED_OBS_DIM = 5 + NUM_JOINTS + 1 # mass, fric, com(3) + temp(N), volt(1)
 
     # --- 5. RL Settings ---
     # 歩行周期 (秒)
@@ -151,7 +137,6 @@ class RobotConfig:
     TARGET_VEL_Y = 0.0
     TARGET_YAW_RATE = 0.0
     MAX_FOOT_TRANSLATION = 0.005  # [m], 5 mm 未満を許容
-    MAX_FOOT_YAW_ROT = np.deg2rad(3.0)
     MAX_SINGLE_FOOT_LIFT = 0.0
     FOOT_CONTACT_THRESHOLD = 0.05  # [N] シミュレーション上の各足の最小接触力
     
@@ -193,11 +178,18 @@ class RobotConfig:
 
     # --- [CONFIG-3 FIXED] 初期高さを明記、終了条件を根拠付き ---
     # mjx_env.py の reset() で qpos[2] = 0.1773 として設定される
-    INITIAL_HEIGHT = 0.1773  # [m] 直立姿勢での重心高さ（胴体位置）
+    # 注意: この値自体はワールド座標系での胴体初期位置だが、
+    # TERMINATION_HEIGHT は envs/mjx_rewards.py::compute() 内で
+    # 「足裏を基準にした相対高さ (base_pos[2] - lowest_foot_z)」との
+    # 比較にのみ使われる（絶対座標の閾値ではない。"Contract Violation B"
+    # 対応で相対高さ判定に統一済み）。以下の引き算は「7cmというマージン量」
+    # を求めるための便宜的な計算であり、絶対座標の意味は持たない。
+    INITIAL_HEIGHT = 0.1773  # [m] 直立姿勢での胴体初期位置（ワールド座標Z）
     
-    # 転倒判定の高さ閾値。初期高さから 7cm 低下したら終了と判定。
-    # 根拠: 中腰姿勢（膝屈曲）での安定限界が約 0.107m（0.1773 - 0.07）
-    TERMINATION_HEIGHT = INITIAL_HEIGHT - 0.07  # = 0.1073m
+    # 転倒判定の高さマージン。足裏基準の相対高さがこの値を下回ったら終了。
+    # 根拠: 中腰姿勢（膝屈曲）での安定限界に相当するマージンとして
+    # INITIAL_HEIGHT - 0.07 を流用している（比較対象は相対高さ）。
+    TERMINATION_HEIGHT = INITIAL_HEIGHT - 0.07  # = 0.1073m（相対高さの閾値）
     TERMINATION_PITCH = np.deg2rad(45) 
     TERMINATION_ROLL  = np.deg2rad(45)
     
@@ -269,20 +261,6 @@ class RobotConfig:
     # USE_REFERENCE_GAIT=False (Direct RL): 20~30Mステップ推奨のため長めに設定
     TOTAL_TRAINING_STEPS_ESTIMATE = 10_000_000 if USE_REFERENCE_GAIT else 25_000_000
 
-    @classmethod
-    def resolve_curriculum_schedule(cls, total_steps: int = None) -> dict:
-        """
-        CURRICULUM_SCHEDULE_FRACTIONS を絶対ステップ数の辞書へ変換する。
-        train_mjx.py 側で実際の総学習ステップ数(またはその推定値)が
-        確定した時点で呼び出し、正しく機能する global_step 相当の値と
-        併せて envs/mjx_env.py へ供給することを推奨する。
-        
-        [CONFIG-1 FIXED] 絶対ステップ版 CURRICULUM_SCHEDULE は廃止。
-        このメソッドは「相対進捗率版から絶対ステップ版への変換」用のみ。
-        """
-        total = total_steps if total_steps is not None else cls.TOTAL_TRAINING_STEPS_ESTIMATE
-        return {int(frac * total): scale for frac, scale in cls.CURRICULUM_SCHEDULE_FRACTIONS.items()}
-
     # ======================================================
     # [GAIT-2 FIXED] 歩容パラメータ (config.py に一元化)
     # ======================================================
@@ -293,22 +271,7 @@ class RobotConfig:
     GAIT_STAND_HEIGHT = 0.23  # [m] 直立時の腰の高さ
     GAIT_STEP_HEIGHT = 0.04   # [m] 足を上げる高さ
     GAIT_STEP_LENGTH = 0.10   # [m] 歩幅
-    GAIT_SWAY_WIDTH = 0.03    # [m] 重心移動の幅
     GAIT_THIGH_LEN = 0.12     # [m] 大腿リンク長（股関節～膝）
     GAIT_KNEE_LEN = 0.12      # [m] 下腿リンク長（膝～足首）
 
-    # --- 6. MJX Training Settings ---
-    # GPU VRAM等に合わせて調整
-    MJX_NUM_ENVS = 2048
-    MJX_BATCH_SIZE = 1024
-    MJX_UNROLL_LENGTH = 20
     MJX_LEARNING_RATE = 1e-4  # 学習崩壊を防ぐため低めに設定
-
-    @classmethod
-    def print_config(cls):
-        print(f"=== Robot Configuration: {cls.ROBOT_NAME} ===")
-        print(f"Joints: {cls.NUM_JOINTS}")
-        print(f"Max Torque: {cls.MOTOR_MAX_TORQUE} Nm (HX-30HM)")
-        print(f"Initial Height: {cls.INITIAL_HEIGHT} m")
-        print(f"Termination Height: {cls.TERMINATION_HEIGHT} m")
-        print(f"Gait Parameters: THIGH={cls.GAIT_THIGH_LEN}m, KNEE={cls.GAIT_KNEE_LEN}m")

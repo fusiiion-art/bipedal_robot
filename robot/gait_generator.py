@@ -4,7 +4,6 @@ robot/gait_generator.py — サイクロイド歩行軌道 + 逆運動学
 【修正対応 (2026-09-08)】
 - [GAIT-1 FIXED] リンク長を config.py から参照（0.12m に統一）
 - [GAIT-2 FIXED] STAND_HEIGHT も config.py に一元化
-- LegKinematics との完全な互換性を確保
 
 サイクロイド軌道の特性:
 - ジャーク最小化（足の着地がスムーズ）
@@ -14,10 +13,8 @@ robot/gait_generator.py — サイクロイド歩行軌道 + 逆運動学
 
 import numpy as np
 import jax.numpy as jp
-from typing import Tuple, Optional
 
 from robot.config import RobotConfig
-from robot.kinematics import LegKinematics
 
 
 # ============================================================
@@ -201,7 +198,6 @@ class GaitGenerator:
     """NumPy ベースのサイクロイド歩行軌道生成クラス。"""
     
     def __init__(self):
-        self.ik = LegKinematics()
         # [GAIT-2 FIXED] config.py から参照
         self.stand_height = RobotConfig.GAIT_STAND_HEIGHT
         self.step_height = RobotConfig.GAIT_STEP_HEIGHT

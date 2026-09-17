@@ -22,14 +22,6 @@ def test_standing_mission_forbids_walking_and_stepping():
     assert RobotConfig.MAX_SINGLE_FOOT_LIFT == 0.0
 
 
-def test_external_push_levels_have_explicit_impulses():
-    duration_s = RobotConfig.PUSH_DURATION_STEPS * RobotConfig.CONTROL_DT
-    impulses = np.asarray(RobotConfig.PUSH_FORCE_LEVELS) * duration_s
-    assert np.all(impulses >= 0.0)
-    assert len(RobotConfig.PUSH_FORCE_LEVELS) >= 2
-    assert RobotConfig.PUSH_DIRECTIONS == 8
-
-
 def test_success_summary_is_not_episode_alive_only():
     summary = summarize_episode_alive([500, 500, 100])
     assert summary["mean"] < RobotConfig.MAX_EPISODE_STEPS

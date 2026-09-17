@@ -12,7 +12,6 @@ real/real_env.py — RPi5 実機メインループ & 観測ベクトル構築
 - [REAL-3 FIXED] action_history 順序を mjx_env と明示的に一致（assert検証追加）
 """
 
-import os
 import time
 import numpy as np
 from typing import Dict, Any, Optional
