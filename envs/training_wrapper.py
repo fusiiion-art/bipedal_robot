@@ -112,3 +112,37 @@ class TrainingProgressWrapper(Wrapper):
         })
         
         return state
+
+
+class EpisodeInfoResetWrapper(Wrapper):
+    """AutoResetWrapperはpipeline_state/obs/Brax自身のinfo['steps']しかリセットしない。
+    raw envが独自にinfoへ積んでいるepisode-scopedなフィールドは、そのままでは
+    エピソード境界をまたいで持ち越されてしまう。これを、直前episodeがdoneだった
+    envスロットについてのみ、reset()相当の初期値に戻す。"""
+
+    RESETTABLE_KEYS = (
+        "step", "last_potential", "action_history", "obs_history",
+        "filtered_action", "last_action", "double_last_action", "triple_last_action",
+        "servo_temp", "supply_volt", "dr_damping", "dr_friction", "dr_kp_scale",
+        "disturbance_scale", "privileged_obs", "disturbance_recovery_steps",
+        # DR値 (項目2でinfoに追加)
+        "mass_scale", "fric_scale", "com_offset",
+    )
+
+    def step(self, state, action):
+        was_done = state.done  # 直前ステップでこのスロットのepisodeが終わっていたか
+        rng_for_fresh, next_rng = jax.random.split(state.info["rng_key"])
+        fresh_state = self.env.unwrapped.reset(rng_for_fresh)
+        state = self.env.step(state, action)
+
+        def pick(fresh, cur):
+            d = was_done
+            if d.ndim:
+                d = jp.reshape(d, [d.shape[0]] + [1] * (cur.ndim - 1))
+            return jp.where(d, fresh, cur)
+
+        new_info = dict(state.info)
+        for key in self.RESETTABLE_KEYS:
+            if key in fresh_state.info and key in state.info:
+                new_info[key] = pick(fresh_state.info[key], state.info[key])
+        return state.replace(info=new_info)

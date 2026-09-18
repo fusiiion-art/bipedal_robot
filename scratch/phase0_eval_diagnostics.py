@@ -110,6 +110,8 @@ def classify_termination_reason(
     is_fallen_pitch: bool,
     is_low: bool,
     truncated: bool,
+    physics_diverged: bool = False,
+    reward_is_finite: bool = True,
 ) -> str:
     """終了理由を分類する。
 
@@ -118,6 +120,18 @@ def classify_termination_reason(
     time-limitのみ。non_illegal_contact / slip_ok / torque_ok による
     terminationは未実装のため、このスクリプトでも分類できない
     （Task4 C-08 未着手であることの根拠として記録する）。
+
+    [改造 2026-09-13] envs/mjx_env.py の物理発散ロールバック機構、
+    envs/mjx_rewards.py の報酬NaN無害化機構の追加に伴い、doneが
+    roll/pitch/height以外の理由(物理シミュレーションの数値発散、
+    報酬計算のNaN)でもTrueになるようになった。これらは「本物の
+    転倒」ではなく「数値的な安全装置の作動」であり、is_fallen_*では
+    検出できないため、従来はunknown_terminatedに埋もれ、実際の
+    発生頻度が見えなくなっていた。physics_diverged/reward_is_finite
+    (envs/mjx_env.py, envs/mjx_rewards.py が state.metrics に記録する
+    フラグ) を渡すことで、これらを明示的に分類できるようにする。
+    デフォルト値は既存の呼び出し・テストとの後方互換性のため
+    「発生していない」側に設定してある。
     """
     if truncated:
         return "time_limit"
@@ -128,6 +142,10 @@ def classify_termination_reason(
         reasons.append("fallen_pitch")
     if is_low:
         reasons.append("fallen_height")
+    if physics_diverged:
+        reasons.append("physics_diverged")
+    if not reward_is_finite:
+        reasons.append("reward_nan")
     if not reasons:
         # terminated=Trueだが既知のフラグがどれも立っていない場合。
         # 実装上は起こらないはずだが、バグ検知のため明示的に区別する。

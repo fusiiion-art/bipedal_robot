@@ -45,7 +45,6 @@ def make_policy_network_factory(
         preprocess_observations_fn=preprocess_observations_fn,
         policy_hidden_layer_sizes=(512, 256, 128),
         value_hidden_layer_sizes=(512, 256, 128),
-        mean_clip_scale=POLICY_MEAN_CLIP_SCALE,
     )
 
 

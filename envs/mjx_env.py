@@ -211,16 +211,19 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         fric_scale = jax.random.uniform(key_fric, shape=(), minval=RobotConfig.RANDOM_FRICTION[0], maxval=RobotConfig.RANDOM_FRICTION[1])
         com_offset = jax.random.uniform(key_com, shape=(3,), minval=RobotConfig.RANDOM_COM_OFFSET[0], maxval=RobotConfig.RANDOM_COM_OFFSET[1])
 
-        # 物理モデルへ反映してからリセットし、各episodeでDRが実際に効くようにする。
-        self._mjx_model = self._apply_domain_randomization(self._mjx_model, mass_scale, fric_scale, com_offset)
-        self._reward_system._model = self._mjx_model
+        # [DR-FIX] self._mjx_model は不変のベースモデルとして保持する。
+        # DR済みモデルはエピソード冒頭でのみ構築し、DR値を info に保存して
+        # step() 側で毎回再構築する。これにより jax.jit(reset) と
+        # jax.jit(step) を別々にコンパイルしても UnexpectedTracerError が
+        # 発生しなくなる。
+        randomized_model = self._apply_domain_randomization(self._mjx_model, mass_scale, fric_scale, com_offset)
         
         servo_temp = jax.random.uniform(key_temp, shape=(self._mjx_model.nu,), minval=RobotConfig.RANDOM_TEMP[0], maxval=RobotConfig.RANDOM_TEMP[1])
         supply_volt = jax.random.uniform(key_volt, shape=(1,), minval=RobotConfig.RANDOM_VOLT[0], maxval=RobotConfig.RANDOM_VOLT[1])
         
         privileged_obs = jp.concatenate([jp.array([mass_scale, fric_scale]), com_offset, servo_temp, supply_volt])
         
-        mjx_data = mjx.make_data(self._mjx_model)
+        mjx_data = mjx.make_data(randomized_model)
         
         nq = self._mjx_model.nq
         qpos = jp.zeros(nq)
@@ -235,7 +238,7 @@ class SenpuuMaruMJXEnv(PipelineEnv):
             qpos = qpos.at[3:7].set(jp.array([1.0, 0.0, 0.0, 0.0]))
             
         mjx_data = mjx_data.replace(qpos=qpos, qvel=jp.zeros(self._mjx_model.nv))
-        mjx_data = mjx.forward(self._mjx_model, mjx_data)
+        mjx_data = mjx.forward(randomized_model, mjx_data)
         
         initial_potential = self._reward_system.compute_potential(mjx_data)
         
@@ -259,6 +262,10 @@ class SenpuuMaruMJXEnv(PipelineEnv):
             'privileged_obs': privileged_obs,
             'last_potential': initial_potential,
             'rng_key': rng_noise,
+            # [DR-FIX] DRスケール値をinfoに保存し、step()側で再構築可能にする
+            'mass_scale': mass_scale,
+            'fric_scale': fric_scale,
+            'com_offset': com_offset,
             'was_disturbed': jp.array(False),
             'disturbance_impulse': jp.zeros(3),  # [FIX] 力積の記録領域を初期化
             'disturbance_recovery_steps': jp.array(1000),
@@ -376,7 +383,11 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         act_state = ActuatorState(temperature=info['servo_temp'], supply_voltage=info['supply_volt'])
         thermal_derating = HX30HMModel.compute_thermal_derating(act_state.temperature)
         voltage_derating = HX30HMModel.compute_voltage_derating(act_state.supply_voltage)
-        real_target_rad = current_cmd + (safe_target_rad - current_cmd) * thermal_derating * voltage_derating
+        # [BUGFIX 項目4] derating合成値を[0,1]にクランプ。voltage_deratingは
+        # 最大1.2まで許容されており、クランプしないとCBFで制限した
+        # safe_target_radを超えてしまう。
+        derating = jp.clip(thermal_derating * voltage_derating, 0.0, 1.0)
+        real_target_rad = current_cmd + (safe_target_rad - current_cmd) * derating
         
         # [FIX] 熱モデルの入力を物理エンジンの実トルクに変更
         # 前回の物理ステップで計算された actuator_force を使用して正確な発熱を推定
@@ -430,10 +441,16 @@ class SenpuuMaruMJXEnv(PipelineEnv):
             info['dr_friction'],
         )
 
+        # [DR-FIX] step()の冒頭でDR済みモデルを再構築する。
+        # self._mjx_modelはベースモデル（不変）のまま。
+        randomized_model = self._apply_domain_randomization(
+            self._mjx_model, info['mass_scale'], info['fric_scale'], info['com_offset']
+        )
+
         def physics_step(carry, _):
             d_prev = carry
             d = carry.replace(ctrl=applied_action, qfrc_applied=qfrc_applied)
-            d = mjx.step(self._mjx_model, d)
+            d = mjx.step(randomized_model, d)
             # [予防追加 2026-09-13] NaN/Inf予防: mjx.step() は
             # NaN-in→NaN-out のため、CONTROL_DECIMATION回のサブステップの
             # うち1回でも発散すると、残り全サブステップが汚染され、この

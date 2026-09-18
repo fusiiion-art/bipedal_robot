@@ -102,12 +102,12 @@ class RealRobotEnv:
     7. インターリーブRead (2台/ループ)
     """
     
-    # robot/config.py 準拠の定数
-    NUM_JOINTS = 20
-    BASE_OBS_DIM = 84    # 12 + 40 + 10 + 2 + 20
-    HISTORY_LEN = 5
-    ACT_DIM = 20
-    OBS_DIM = 625        # BASE_OBS + HISTORY(520) + TEMP(20) + VOLT(1)
+    # [項目7] robot/config.py の定数を直接参照（ハードコード再定義を廃止）
+    NUM_JOINTS = RobotConfig.NUM_JOINTS
+    BASE_OBS_DIM = RobotConfig.BASE_OBS_DIM
+    HISTORY_LEN = RobotConfig.HISTORY_LEN
+    ACT_DIM = RobotConfig.ACT_DIM
+    OBS_DIM = RobotConfig.OBS_DIM
     ACTION_SCALE = RobotConfig.ACTION_SCALE
     RESIDUAL_SCALE = 0.5
     EMA_ALPHA = 0.8      # LPF平滑化係数
@@ -258,7 +258,12 @@ class RealRobotEnv:
         lin_vel = self._vel_estimate.copy()
         
         # --- 2. 関節状態 ---
-        joint_pos = self.smoothed_action.copy()  # 簡易: 指令値 ≈ 実角度
+        # [項目6] 実機のサーボ位置フィードバックを使用（指令値の代わりに実測値）
+        if hasattr(self.spine, 'servo_positions') and np.any(self.spine.servo_positions != 0):
+            joint_pos = self.spine.servo_positions.copy()
+        else:
+            # フォールバック: サーボ位置がまだ読み取られていない場合は指令値を使用
+            joint_pos = self.smoothed_action.copy()
         # 有限差分で関節角速度を推定
         joint_vel = (joint_pos - self._prev_joint_pos) / self.dt
         self._prev_joint_pos = joint_pos.copy()

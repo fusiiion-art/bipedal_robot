@@ -11,6 +11,8 @@ robot/gait_generator.py — サイクロイド歩行軌道 + 逆運動学
 - 倒立振子モデルと整合しやすい
 """
 
+from typing import Tuple
+
 import numpy as np
 import jax.numpy as jp
 
@@ -75,7 +77,8 @@ def jax_cycloid_trajectory(
     
     # スイッチング
     x_traj = jp.where(is_swing, x_swing - step_length / 2.0, -step_length / 2.0)
-    z_traj = jp.where(is_swing, z_swing, z_stance)
+    # [項目8] stand_heightを反映: 股関節を原点とした下向きのZ座標
+    z_traj = jp.where(is_swing, -stand_height + z_swing, -stand_height)
     
     return x_traj, z_traj
 
@@ -230,7 +233,8 @@ class GaitGenerator:
         z_swing = (self.step_height / np.pi) * (1.0 - np.cos(theta))
         
         x = x_swing - self.step_length / 2.0 if is_swing else -self.step_length / 2.0
-        z = z_swing if is_swing else 0.0
+        # [項目8] stand_heightを反映: 股関節を原点とした下向きのZ座標
+        z = (-self.stand_height + z_swing) if is_swing else -self.stand_height
         
         return x, z
     

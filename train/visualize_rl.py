@@ -107,7 +107,10 @@ def run_interactive(params):
 
     print("Launching MuJoCo Passive Viewer... Close the window to stop.")
     rng = jax.random.PRNGKey(0)
-    state = jax.jit(env.reset)(rng)
+    # [項目12] jax.jit()をループ外で1回だけ作成して使い回す
+    reset_fn = jax.jit(env.reset)
+    step_fn = jax.jit(env.step)
+    state = reset_fn(rng)
 
     with mujoco.viewer.launch_passive(model, data) as viewer:
         viewer.opt.geomgroup[0] = 0
@@ -120,7 +123,7 @@ def run_interactive(params):
             step_start = time.time()
             rng, rng_step = jax.random.split(rng)
             action, _ = inference_fn(state.obs, rng_step)
-            state = jax.jit(env.step)(state, action)
+            state = step_fn(state, action)
 
             data.qpos[:] = state.pipeline_state.qpos
             data.qvel[:] = state.pipeline_state.qvel
@@ -131,7 +134,7 @@ def run_interactive(params):
 
             if getattr(state, "done", False):
                 rng, reset_key = jax.random.split(rng)
-                state = jax.jit(env.reset)(reset_key)
+                state = reset_fn(reset_key)
 
             elapsed = time.time() - step_start
             sleep_time = RobotConfig.CONTROL_DT - elapsed
@@ -152,14 +155,17 @@ def render_video(params, steps: int, output: str):
     camera.elevation = -15.0
 
     rng = jax.random.PRNGKey(0)
-    state = jax.jit(env.reset)(rng)
+    # [項目12] jax.jit()をループ外で1回だけ作成して使い回す
+    reset_fn = jax.jit(env.reset)
+    step_fn = jax.jit(env.step)
+    state = reset_fn(rng)
 
     frames = []
     print(f"Rendering {steps} frames to {output}...")
     for step in range(steps):
         rng, rng_step = jax.random.split(rng)
         action, _ = inference_fn(state.obs, rng_step)
-        state = jax.jit(env.step)(state, action)
+        state = step_fn(state, action)
 
         data.qpos[:] = state.pipeline_state.qpos
         data.qvel[:] = state.pipeline_state.qvel
@@ -172,7 +178,7 @@ def render_video(params, steps: int, output: str):
 
         if getattr(state, "done", False):
             rng, reset_key = jax.random.split(rng)
-            state = jax.jit(env.reset)(reset_key)
+            state = reset_fn(reset_key)
 
     output_path = REPO_ROOT / "scratch" / "simulation_output" / output
     output_path.parent.mkdir(parents=True, exist_ok=True)

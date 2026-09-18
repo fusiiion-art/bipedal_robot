@@ -110,7 +110,7 @@ ppo_networks.make_inference_fn = _safe_make_inference_fn
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from robot.config import RobotConfig
 from envs.mjx_env import SenpuuMaruMJXEnv  # noqa: F401 (Brax環境登録のため)
-from envs.training_wrapper import TrainingProgressWrapper
+from envs.training_wrapper import TrainingProgressWrapper, EpisodeInfoResetWrapper
 
 # ============================================================================
 # [監査追加 2026-09-13] 報酬ハッキング・学習破綻の検出
@@ -584,6 +584,7 @@ def main():
 
     def _wrap_with_progress(env, **kwargs):
         wrapped = _original_wrap(env, **kwargs)
+        wrapped = EpisodeInfoResetWrapper(wrapped)
         return TrainingProgressWrapper(wrapped, total_steps_per_env=steps_per_env)
 
     brax_training.wrap = _wrap_with_progress

@@ -272,6 +272,13 @@ class BusLinkerV3:
             if vin is not None:
                 self.servo_voltages[self._read_cursor] = float(vin) / 1000.0
             
+            # [項目6] 実機関節角度フィードバック: サーボ位置の巡回読み出し
+            pos = self._read_servo_register(servo_id, self.CMD_SERVO_POS_READ)
+            if pos is not None:
+                # サーボ位置は0-1000 → -120°〜+120° の範囲にマッピング
+                angle_deg = (float(pos) / 1000.0) * 240.0 - 120.0
+                self.servo_positions[self._read_cursor] = float(np.radians(angle_deg))
+            
             self._read_cursor = (self._read_cursor + 1) % self.num_servos
     
     def _read_servo_register(self, servo_id: int, cmd: int) -> Optional[int]:
