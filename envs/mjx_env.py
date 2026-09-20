@@ -152,7 +152,7 @@ class SenpuuMaruMJXEnv(PipelineEnv):
 
         self._reward_system = MJXRewardSystem(self._mjx_model, RobotConfig.REWARD_WEIGHTS, left_foot_id, right_foot_id)
         
-        from safety.cbf import CBFSafetyFilter
+        from envs.cbf import CBFSafetyFilter
         self._cbf = CBFSafetyFilter()
 
     @property
