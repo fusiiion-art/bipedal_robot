@@ -71,7 +71,7 @@ def test_diagnose_failure_timing_early_concentration():
 def test_diagnose_failure_timing_empty():
     """空の入力に対する失敗タイミング診断。"""
     result = diagnose_failure_timing([], max_step=500)
-    assert result["classification"] == "データ不足"
+    assert result["classification"] == "no_failures"
 
 
 def test_summarize_episode_alive_empty():

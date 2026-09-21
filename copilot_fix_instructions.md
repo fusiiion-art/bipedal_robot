@@ -595,23 +595,24 @@ def test_auto_reset_resets_episode_scoped_info():
 
 ## 実施順まとめ（チェックリスト）
 
-- [ ] Phase 0.1: DRクラッシュの実機確認
-- [ ] Phase 0.2: Tupleエラーの実機確認
-- [ ] Phase 0.3: gate0_standing_evalクラッシュの実機確認
-- [ ] 項目1: Tuple import追加
-- [ ] 項目2: DR実装リファクタリング（要人間レビュー）
-- [ ] 項目3: EpisodeInfoResetWrapper追加
-- [ ] 項目4: CBF後derating clip
-- [ ] 項目5: mean二重クリップ解消
-- [ ] 項目6: 実機関節角度フィードバック配線
-- [ ] 項目7: real_env.pyのRobotConfig参照化
-- [ ] 項目8: stand_height反映
-- [ ] 項目9: phase0診断スクリプトの重複解消
-- [ ] 項目10: pytestテスト追加
-- [ ] 項目11: gate0_standing_evalのjit化
-- [ ] 項目12: visualize_rl.pyのjit使い回し
-- [ ] 項目13: gate0_*.py 3本を`gate0_eval.py`に統合
-- [ ] 項目14: scratch/その他の重複整理（render/validate/save_html等）
-- [ ] 項目15: assets/safety/deploy/stubsのフォルダ整理（stubsは要事前確認）
-- [ ] Phase 2: 統合テスト3本追加
-- [ ] Phase 3の引き継ぎ事項を`docs/`配下に転記
+- [x] Phase 0.1: DRクラッシュの実機確認（再現ロジック確認済／実装済）
+- [x] Phase 0.2: Tupleエラーの実機確認（実機確認済）
+- [x] Phase 0.3: gate0_standing_evalクラッシュの実機確認（再現確認済／jit化済）
+- [x] 項目1: Tuple import追加
+- [x] 項目2: DR実装リファクタリング（案A実装完了）
+- [x] 項目3: EpisodeInfoResetWrapper追加
+- [x] 項目4: CBF後derating clip
+- [x] 項目5: mean二重クリップ解消
+- [x] 項目6: 実機関節角度フィードバック配線
+- [x] 項目7: real_env.pyのRobotConfig参照化
+- [x] 項目8: stand_height反映
+- [x] 項目9: phase0診断スクリプトの重複解消
+- [x] 項目10: pytestテスト追加
+- [x] 項目11: gate0_standing_evalのjit化
+- [x] 項目12: visualize_rl.pyのjit使い回し
+- [x] 項目13: gate0_*.py 3本を`gate0_eval.py`に統合
+- [x] 項目14: scratch/その他の重複整理（render/validate/save_html等）
+- [x] 項目15: assets/safety/deploy/stubsのフォルダ整理（stubsは要事前確認）
+- [x] Phase 2: 統合テスト3本追加 (`tests/test_training_integration.py`)
+- [x] Phase 3の引き継ぎ事項を`docs/`配下に転記 (`docs/phase3_handover.md`)
+

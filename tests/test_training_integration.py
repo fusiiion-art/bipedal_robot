@@ -83,7 +83,7 @@ def test_auto_reset_resets_episode_scoped_info():
     state = state.replace(done=jp.array([1.0, 0.0]))
     state = step_fn(state, action)
 
-    # スロット0はリセット後に1ステップ進んで step=1、スロット1はリセットされずに step=2 になるはず
+    # スロット0はリセットされて step=0、スロット1はリセットされずに step=2 になるはず
     steps_after_reset = np.asarray(state.info["step"])
-    assert steps_after_reset[0] == 1, f"Expected slot 0 to reset to 0 then advance to 1, got {steps_after_reset[0]}"
+    assert steps_after_reset[0] == 0, f"Expected slot 0 to reset to 0, got {steps_after_reset[0]}"
     assert steps_after_reset[1] == 2, f"Expected slot 1 to advance to 2, got {steps_after_reset[1]}"

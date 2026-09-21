@@ -40,13 +40,13 @@ def test_training_progress_wrapper_counters():
     """カウンタが単調増加し、progressがtotal stepsに基づくことを確認。"""
     env = TrainingProgressWrapper(Wrapper(_DummyEnv()), total_steps_per_env=10)
     state = env.reset(jax.random.PRNGKey(0))
-    assert float(state.info["training_progress"]) == 0.0
+    assert float(np.asarray(state.info["training_progress"]).squeeze()) == 0.0
 
     for expected in range(1, 4):
         state = env.step(state, jp.array([0.0]))
-        assert int(state.info["_env_steps"]) == expected
-        assert int(state.info["global_step"]) == expected
-        assert np.isclose(float(state.info["training_progress"]), expected / 10.0)
+        assert int(np.asarray(state.info["_env_steps"]).squeeze()) == expected
+        assert int(np.asarray(state.info["global_step"]).squeeze()) == expected
+        assert np.isclose(float(np.asarray(state.info["training_progress"]).squeeze()), expected / 10.0)
 
 
 def test_training_progress_wrapper_progress_saturates():
@@ -55,4 +55,4 @@ def test_training_progress_wrapper_progress_saturates():
     state = env.reset(jax.random.PRNGKey(0))
     for _ in range(5):
         state = env.step(state, jp.array([0.0]))
-    assert float(state.info["training_progress"]) >= 1.0
+    assert float(np.asarray(state.info["training_progress"]).squeeze()) >= 1.0

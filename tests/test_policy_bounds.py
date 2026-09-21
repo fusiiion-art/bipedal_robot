@@ -52,7 +52,7 @@ def test_policy_network_forward_pass_bounds():
     params = network.policy_network.init(jax.random.PRNGKey(0))
     # 極端な入力でネットワーク出力を飽和させる
     obs = jnp.ones((1, obs_size)) * 1000.0
-    logits = network.policy_network.apply(params, obs)
+    logits = network.policy_network.apply(None, params, obs)
     dist = network.parametric_action_distribution.create_dist(logits)
     max_abs_loc = float(jnp.max(jnp.abs(dist.loc)))
     # クリップ済みのlocは POLICY_MEAN_CLIP_SCALE 以下であるべき

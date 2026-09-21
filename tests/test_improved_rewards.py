@@ -18,19 +18,18 @@ def test_curriculum_learning():
     print("TEST 1: Curriculum Learning Schedule")
     print("=" * 60)
     
-    schedule = RobotConfig.CURRICULUM_SCHEDULE
-    test_steps = [0, 50000, 100000, 300000, 500000, 1000000, 2000000, 5000000]
+    schedule = RobotConfig.CURRICULUM_SCHEDULE_FRACTIONS
+    test_fractions = [0.0, 0.05, 0.1, 0.3, 0.5, 0.7, 1.0]
     
-    for step in test_steps:
-        # スケジュール内のキーをソート
+    for frac in test_fractions:
         keys = sorted(schedule.keys())
         scale = schedule[keys[0]]
         for key in keys:
-            if step >= key:
+            if frac >= key:
                 scale = schedule[key]
         
         force = RobotConfig.RANDOM_PUSH_MAX_FORCE * scale
-        print(f"Step {step:8d}: scale={scale:.2f}, max_force={force:.2f}N")
+        print(f"Fraction {frac:4.2f}: scale={scale:.2f}, max_force={force:.2f}N")
     
     print("✓ Curriculum learning schedule validated\n")
 
@@ -150,6 +149,9 @@ def test_stance_penalty_discourages_wide_foot_spacing():
     class DummyModel:
         nq = 7
         nu = 6
+        actuator_trnid = [[i, 0] for i in range(6)]
+        jnt_qposadr = list(range(7, 13))
+        jnt_dofadr = list(range(6, 12))
 
     reward_system = MJXRewardSystem(
         DummyModel(),
