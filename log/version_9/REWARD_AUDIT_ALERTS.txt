@@ -1,0 +1,191 @@
+
+[Step 0]
+  - [Metric Corruption] stability_index が範囲外: 12.171 (期待範囲 [0, 1])
+  - [Action Distortion] CBFによるアクション補正の飽和率が高い: 342.1% — 方策が実行不能な指令を多発させているか、safety/cbf.py の制限が過剰に効いている可能性。
+
+[Step 532480]
+  - [Exploitation] 報酬成分 'eval/episode_r_cp' が異常に大きい: 118.37 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_upright' が異常に大きい: 57.48 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_com_stab' が異常に大きい: 86.37 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_alive' が異常に大きい: 131.00 (閾値 ±50)
+  - [Metric Corruption] stability_index が範囲外: 54.032 (期待範囲 [0, 1])
+  - [Potential Decay] potentialは増加(+1078.875)だが pbrs_reward が大きく負(-26.99)。envs/mjx_rewards.py の compute_potential() や discounting(gamma)を確認。
+  - [Action Distortion] CBFによるアクション補正の飽和率が高い: 1532.8% — 方策が実行不能な指令を多発させているか、safety/cbf.py の制限が過剰に効いている可能性。
+
+[Step 1064960]
+  - [Exploitation] 報酬成分 'eval/episode_r_cp' が異常に大きい: 219.94 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_upright' が異常に大きい: 125.37 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_com_stab' が異常に大きい: 175.19 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_alive' が異常に大きい: 236.48 (閾値 ±50)
+  - [Metric Corruption] stability_index が範囲外: 102.508 (期待範囲 [0, 1])
+  - [Potential Decay] potentialは増加(+1225.383)だが pbrs_reward が大きく負(-38.36)。envs/mjx_rewards.py の compute_potential() や discounting(gamma)を確認。
+  - [Action Distortion] CBFによるアクション補正の飽和率が高い: 2752.5% — 方策が実行不能な指令を多発させているか、safety/cbf.py の制限が過剰に効いている可能性。
+
+[Step 1597440]
+  - [Exploitation] 報酬成分 'eval/episode_r_cp' が異常に大きい: 410.52 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_recovery' が異常に大きい: 64.40 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_upright' が異常に大きい: 317.73 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_com_stab' が異常に大きい: 362.66 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_pbrs_reward' が異常に大きい: -57.25 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_alive' が異常に大きい: 432.11 (閾値 ±50)
+  - [Metric Corruption] stability_index が範囲外: 195.628 (期待範囲 [0, 1])
+  - [Potential Decay] potentialは増加(+2457.679)だが pbrs_reward が大きく負(-57.25)。envs/mjx_rewards.py の compute_potential() や discounting(gamma)を確認。
+  - [Action Distortion] CBFによるアクション補正の飽和率が高い: 4996.6% — 方策が実行不能な指令を多発させているか、safety/cbf.py の制限が過剰に効いている可能性。
+
+[Step 2129920]
+  - [Exploitation] 報酬成分 'eval/episode_r_cp' が異常に大きい: 477.16 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_upright' が異常に大きい: 440.58 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_com_stab' が異常に大きい: 448.32 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_pbrs_reward' が異常に大きい: -63.95 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_alive' が異常に大きい: 498.69 (閾値 ±50)
+  - [Metric Corruption] stability_index が範囲外: 232.483 (期待範囲 [0, 1])
+  - [Potential Decay] potentialは増加(+971.637)だが pbrs_reward が大きく負(-63.95)。envs/mjx_rewards.py の compute_potential() や discounting(gamma)を確認。
+  - [Action Distortion] CBFによるアクション補正の飽和率が高い: 5584.2% — 方策が実行不能な指令を多発させているか、safety/cbf.py の制限が過剰に効いている可能性。
+
+[Step 2662400]
+  - [Exploitation] 報酬成分 'eval/episode_r_cp' が異常に大きい: 480.56 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_upright' が異常に大きい: 471.16 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_com_stab' が異常に大きい: 465.38 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_pbrs_reward' が異常に大きい: -65.02 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_alive' が異常に大きい: 500.00 (閾値 ±50)
+  - [Metric Corruption] stability_index が範囲外: 241.311 (期待範囲 [0, 1])
+  - [Potential Decay] potentialは増加(+160.411)だが pbrs_reward が大きく負(-65.02)。envs/mjx_rewards.py の compute_potential() や discounting(gamma)を確認。
+  - [Action Distortion] CBFによるアクション補正の飽和率が高い: 5385.6% — 方策が実行不能な指令を多発させているか、safety/cbf.py の制限が過剰に効いている可能性。
+
+[Step 3194880]
+  - [Exploitation] 報酬成分 'eval/episode_r_cp' が異常に大きい: 481.83 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_upright' が異常に大きい: 485.21 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_com_stab' が異常に大きい: 475.53 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_pbrs_reward' が異常に大きい: -66.92 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_alive' が異常に大きい: 500.00 (閾値 ±50)
+  - [Metric Corruption] stability_index が範囲外: 249.736 (期待範囲 [0, 1])
+  - [Potential Decay] potentialは増加(+248.697)だが pbrs_reward が大きく負(-66.92)。envs/mjx_rewards.py の compute_potential() や discounting(gamma)を確認。
+  - [Action Distortion] CBFによるアクション補正の飽和率が高い: 5121.8% — 方策が実行不能な指令を多発させているか、safety/cbf.py の制限が過剰に効いている可能性。
+
+[Step 3727360]
+  - [Exploitation] 報酬成分 'eval/episode_r_cp' が異常に大きい: 482.07 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_upright' が異常に大きい: 490.76 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_com_stab' が異常に大きい: 482.24 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_pbrs_reward' が異常に大きい: -69.23 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_alive' が異常に大きい: 500.00 (閾値 ±50)
+  - [Metric Corruption] stability_index が範囲外: 257.689 (期待範囲 [0, 1])
+  - [Potential Decay] potentialは増加(+282.563)だが pbrs_reward が大きく負(-69.23)。envs/mjx_rewards.py の compute_potential() や discounting(gamma)を確認。
+  - [Action Distortion] CBFによるアクション補正の飽和率が高い: 4951.5% — 方策が実行不能な指令を多発させているか、safety/cbf.py の制限が過剰に効いている可能性。
+
+[Step 4259840]
+  - [Exploitation] 報酬成分 'eval/episode_r_cp' が異常に大きい: 482.62 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_upright' が異常に大きい: 493.91 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_com_stab' が異常に大きい: 487.28 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_pbrs_reward' が異常に大きい: -71.64 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_alive' が異常に大きい: 500.00 (閾値 ±50)
+  - [Metric Corruption] stability_index が範囲外: 266.785 (期待範囲 [0, 1])
+  - [Potential Decay] potentialは増加(+313.231)だが pbrs_reward が大きく負(-71.64)。envs/mjx_rewards.py の compute_potential() や discounting(gamma)を確認。
+  - [Action Distortion] CBFによるアクション補正の飽和率が高い: 4719.1% — 方策が実行不能な指令を多発させているか、safety/cbf.py の制限が過剰に効いている可能性。
+
+[Step 4792320]
+  - [Exploitation] 報酬成分 'eval/episode_r_cp' が異常に大きい: 483.16 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_upright' が異常に大きい: 495.42 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_com_stab' が異常に大きい: 489.93 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_pbrs_reward' が異常に大きい: -73.63 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_alive' が異常に大きい: 500.00 (閾値 ±50)
+  - [Metric Corruption] stability_index が範囲外: 274.627 (期待範囲 [0, 1])
+  - [Potential Decay] potentialは増加(+258.099)だが pbrs_reward が大きく負(-73.63)。envs/mjx_rewards.py の compute_potential() や discounting(gamma)を確認。
+  - [Action Distortion] CBFによるアクション補正の飽和率が高い: 4482.9% — 方策が実行不能な指令を多発させているか、safety/cbf.py の制限が過剰に効いている可能性。
+
+[Step 5324800]
+  - [Exploitation] 報酬成分 'eval/episode_r_cp' が異常に大きい: 483.12 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_upright' が異常に大きい: 495.45 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_com_stab' が異常に大きい: 491.65 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_pbrs_reward' が異常に大きい: -74.63 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_alive' が異常に大きい: 500.00 (閾値 ±50)
+  - [Metric Corruption] stability_index が範囲外: 278.426 (期待範囲 [0, 1])
+  - [Potential Decay] potentialは増加(+109.226)だが pbrs_reward が大きく負(-74.63)。envs/mjx_rewards.py の compute_potential() や discounting(gamma)を確認。
+  - [Action Distortion] CBFによるアクション補正の飽和率が高い: 4319.3% — 方策が実行不能な指令を多発させているか、safety/cbf.py の制限が過剰に効いている可能性。
+
+[Step 5857280]
+  - [Exploitation] 報酬成分 'eval/episode_r_cp' が異常に大きい: 483.01 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_upright' が異常に大きい: 496.02 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_com_stab' が異常に大きい: 492.61 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_pbrs_reward' が異常に大きい: -75.56 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_alive' が異常に大きい: 500.00 (閾値 ±50)
+  - [Metric Corruption] stability_index が範囲外: 281.614 (期待範囲 [0, 1])
+  - [Potential Decay] potentialは増加(+115.707)だが pbrs_reward が大きく負(-75.56)。envs/mjx_rewards.py の compute_potential() や discounting(gamma)を確認。
+  - [Action Distortion] CBFによるアクション補正の飽和率が高い: 4185.0% — 方策が実行不能な指令を多発させているか、safety/cbf.py の制限が過剰に効いている可能性。
+
+[Step 6389760]
+  - [Exploitation] 報酬成分 'eval/episode_r_cp' が異常に大きい: 482.55 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_upright' が異常に大きい: 495.80 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_com_stab' が異常に大きい: 492.92 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_pbrs_reward' が異常に大きい: -75.59 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_alive' が異常に大きい: 500.00 (閾値 ±50)
+  - [Metric Corruption] stability_index が範囲外: 281.271 (期待範囲 [0, 1])
+  - [Potential Decay] potentialは増加(+9.231)だが pbrs_reward が大きく負(-75.59)。envs/mjx_rewards.py の compute_potential() や discounting(gamma)を確認。
+  - [Action Distortion] CBFによるアクション補正の飽和率が高い: 4158.1% — 方策が実行不能な指令を多発させているか、safety/cbf.py の制限が過剰に効いている可能性。
+
+[Step 6922240]
+  - [Exploitation] 報酬成分 'eval/episode_r_cp' が異常に大きい: 483.47 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_upright' が異常に大きい: 496.06 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_com_stab' が異常に大きい: 493.80 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_pbrs_reward' が異常に大きい: -76.28 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_alive' が異常に大きい: 500.00 (閾値 ±50)
+  - [Metric Corruption] stability_index が範囲外: 286.148 (期待範囲 [0, 1])
+  - [Potential Decay] potentialは増加(+80.148)だが pbrs_reward が大きく負(-76.28)。envs/mjx_rewards.py の compute_potential() や discounting(gamma)を確認。
+  - [Action Distortion] CBFによるアクション補正の飽和率が高い: 4019.6% — 方策が実行不能な指令を多発させているか、safety/cbf.py の制限が過剰に効いている可能性。
+
+[Step 7454720]
+  - [Exploitation] 報酬成分 'eval/episode_r_cp' が異常に大きい: 482.50 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_upright' が異常に大きい: 496.01 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_com_stab' が異常に大きい: 494.04 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_pbrs_reward' が異常に大きい: -76.65 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_alive' が異常に大きい: 500.00 (閾値 ±50)
+  - [Metric Corruption] stability_index が範囲外: 284.905 (期待範囲 [0, 1])
+  - [Potential Decay] potentialは増加(+30.060)だが pbrs_reward が大きく負(-76.65)。envs/mjx_rewards.py の compute_potential() や discounting(gamma)を確認。
+  - [Action Distortion] CBFによるアクション補正の飽和率が高い: 3947.1% — 方策が実行不能な指令を多発させているか、safety/cbf.py の制限が過剰に効いている可能性。
+
+[Step 7987200]
+  - [Exploitation] 報酬成分 'eval/episode_r_cp' が異常に大きい: 482.98 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_upright' が異常に大きい: 496.33 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_com_stab' が異常に大きい: 494.38 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_pbrs_reward' が異常に大きい: -76.76 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_alive' が異常に大きい: 500.00 (閾値 ±50)
+  - [Metric Corruption] stability_index が範囲外: 287.366 (期待範囲 [0, 1])
+  - [Potential Decay] potentialは増加(+35.822)だが pbrs_reward が大きく負(-76.76)。envs/mjx_rewards.py の compute_potential() や discounting(gamma)を確認。
+  - [Action Distortion] CBFによるアクション補正の飽和率が高い: 3868.3% — 方策が実行不能な指令を多発させているか、safety/cbf.py の制限が過剰に効いている可能性。
+
+[Step 8519680]
+  - [Exploitation] 報酬成分 'eval/episode_r_cp' が異常に大きい: 480.86 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_upright' が異常に大きい: 493.16 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_com_stab' が異常に大きい: 492.12 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_pbrs_reward' が異常に大きい: -76.55 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_alive' が異常に大きい: 498.16 (閾値 ±50)
+  - [Metric Corruption] stability_index が範囲外: 286.630 (期待範囲 [0, 1])
+  - [Action Distortion] CBFによるアクション補正の飽和率が高い: 3798.2% — 方策が実行不能な指令を多発させているか、safety/cbf.py の制限が過剰に効いている可能性。
+
+[Step 9052160]
+  - [Exploitation] 報酬成分 'eval/episode_r_cp' が異常に大きい: 483.45 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_upright' が異常に大きい: 495.91 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_com_stab' が異常に大きい: 494.65 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_pbrs_reward' が異常に大きい: -76.97 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_alive' が異常に大きい: 500.00 (閾値 ±50)
+  - [Metric Corruption] stability_index が範囲外: 291.281 (期待範囲 [0, 1])
+  - [Potential Decay] potentialは増加(+60.907)だが pbrs_reward が大きく負(-76.97)。envs/mjx_rewards.py の compute_potential() や discounting(gamma)を確認。
+  - [Action Distortion] CBFによるアクション補正の飽和率が高い: 3727.7% — 方策が実行不能な指令を多発させているか、safety/cbf.py の制限が過剰に効いている可能性。
+
+[Step 9584640]
+  - [Exploitation] 報酬成分 'eval/episode_r_cp' が異常に大きい: 483.15 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_upright' が異常に大きい: 496.40 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_com_stab' が異常に大きい: 494.94 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_pbrs_reward' が異常に大きい: -77.43 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_alive' が異常に大きい: 500.00 (閾値 ±50)
+  - [Metric Corruption] stability_index が範囲外: 291.517 (期待範囲 [0, 1])
+  - [Potential Decay] potentialは増加(+44.005)だが pbrs_reward が大きく負(-77.43)。envs/mjx_rewards.py の compute_potential() や discounting(gamma)を確認。
+  - [Action Distortion] CBFによるアクション補正の飽和率が高い: 3611.6% — 方策が実行不能な指令を多発させているか、safety/cbf.py の制限が過剰に効いている可能性。
+
+[Step 10117120]
+  - [Exploitation] 報酬成分 'eval/episode_r_cp' が異常に大きい: 483.14 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_upright' が異常に大きい: 496.06 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_r_com_stab' が異常に大きい: 494.85 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_pbrs_reward' が異常に大きい: -77.38 (閾値 ±50)
+  - [Exploitation] 報酬成分 'eval/episode_alive' が異常に大きい: 500.00 (閾値 ±50)
+  - [Metric Corruption] stability_index が範囲外: 291.514 (期待範囲 [0, 1])
+  - [Action Distortion] CBFによるアクション補正の飽和率が高い: 3561.3% — 方策が実行不能な指令を多発させているか、safety/cbf.py の制限が過剰に効いている可能性。

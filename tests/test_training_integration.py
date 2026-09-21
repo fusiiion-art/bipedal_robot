@@ -17,7 +17,7 @@ jax = pytest.importorskip("jax")
 jp = pytest.importorskip("jax.numpy")
 mujoco = pytest.importorskip("mujoco")
 brax = pytest.importorskip("brax")
-from brax.envs.wrappers.training import AutoResetWrapper
+from brax.envs.wrappers.training import AutoResetWrapper, VmapWrapper
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -87,3 +87,30 @@ def test_auto_reset_resets_episode_scoped_info():
     steps_after_reset = np.asarray(state.info["step"])
     assert steps_after_reset[0] == 0, f"Expected slot 0 to reset to 0, got {steps_after_reset[0]}"
     assert steps_after_reset[1] == 2, f"Expected slot 1 to advance to 2, got {steps_after_reset[1]}"
+
+
+def test_auto_reset_resets_episode_scoped_info_batched():
+    """train_mjx.pyと同様にVmapWrapperが内側にある場合（batched state）の動作を検証する。"""
+    env = SenpuuMaruMJXEnv()
+    num_envs = 4
+    wrapped = VmapWrapper(env)
+    wrapped = AutoResetWrapper(wrapped)
+    wrapped = EpisodeInfoResetWrapper(wrapped)
+
+    step_fn = jax.jit(wrapped.step)
+    keys = jax.random.split(jax.random.PRNGKey(42), num_envs)
+    state = jax.jit(wrapped.reset)(keys)
+
+    action = jp.zeros((num_envs, env.action_size))
+    state = step_fn(state, action)
+    assert np.all(np.asarray(state.info["step"]) == 1)
+
+    # スロット0のみ強制的に done=1.0 にして次ステップを実行
+    state = state.replace(done=jp.array([1.0, 0.0, 0.0, 0.0]))
+    state = step_fn(state, action)
+    steps = np.asarray(state.info["step"])
+    assert steps[0] == 0, f"Expected slot 0 to reset to 0, got {steps[0]}"
+    assert steps[1] == 2, f"Expected slot 1 to advance to 2, got {steps[1]}"
+    assert steps[2] == 2
+    assert steps[3] == 2
+

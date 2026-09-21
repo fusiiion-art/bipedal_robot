@@ -40,6 +40,13 @@
 
 import os
 import sys
+from pathlib import Path
+
+# Add project root to sys.path so robot, envs, etc. can be imported
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 import argparse
 import time
 import numpy as np
@@ -48,6 +55,9 @@ from datetime import datetime
 # sysモジュールのパッチ (Windows上のbrax/orbax依存対策)
 if not hasattr(sys.modules.get("uvloop", None), "__name__"):
     sys.modules["uvloop"] = type(sys)("uvloop")
+ 
+# JAX GPU memory preallocation configuration (prevent repeated OOM retry spam)
+os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
 import jax
 import jax.numpy as jnp
@@ -102,12 +112,6 @@ def _safe_make_inference_fn(ppo_networks_tuple, **make_kwargs):
 
 ppo_networks.make_inference_fn = _safe_make_inference_fn
 
-
-
-
-
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from robot.config import RobotConfig
 from envs.mjx_env import SenpuuMaruMJXEnv  # noqa: F401 (Brax環境登録のため)
 from envs.training_wrapper import TrainingProgressWrapper, EpisodeInfoResetWrapper
@@ -204,9 +208,17 @@ def _audit_reward_metrics(metrics_dict: dict, metrics_history: list) -> list:
         key = _find_metric_key(metrics_dict, suffix)
         return metrics_dict[key] if key is not None else default
 
+    avg_ep_len = _get('avg_episode_length', _get('episode_alive', 1.0))
+    avg_ep_len = max(float(avg_ep_len), 1.0)
+
     total_reward = _get('total_reward', metrics_dict.get('reward', 0.0))
     total_penalty = _get('total_penalty', 0.0)
-    stability_index = _get('stability_index', 0.5)
+
+    # stability_index の正規化 (Braxのeval/episode_*はエピソード合計のため1ステップ平均値に換算)
+    stability_key = _find_metric_key(metrics_dict, 'stability_index')
+    stability_index_raw = metrics_dict[stability_key] if stability_key is not None else 0.5
+    stability_index = stability_index_raw / avg_ep_len if (stability_key and 'episode_' in stability_key) else stability_index_raw
+
     r_upright = None
     r_upright_key = _find_metric_key(metrics_dict, 'r_upright')
     if r_upright_key is not None:
@@ -223,10 +235,11 @@ def _audit_reward_metrics(metrics_dict: dict, metrics_history: list) -> list:
         key = _find_metric_key(metrics_dict, suffix)
         if key is None:
             continue
-        val = metrics_dict[key]
+        val_raw = metrics_dict[key]
+        val = val_raw / avg_ep_len if 'episode_' in key else val_raw
         if abs(val) > th['exploitation_abs_max']:
             alerts.append(
-                f"[Exploitation] 報酬成分 '{key}' が異常に大きい: {val:.2f} "
+                f"[Exploitation] 報酬成分 '{key}' が異常に大きい: {val:.2f}/step "
                 f"(閾値 ±{th['exploitation_abs_max']:.0f})"
             )
 
@@ -251,7 +264,7 @@ def _audit_reward_metrics(metrics_dict: dict, metrics_history: list) -> list:
     if stability_index < 0.0 or stability_index > th['stability_index_max']:
         alerts.append(
             f"[Metric Corruption] stability_index が範囲外: "
-            f"{stability_index:.3f} (期待範囲 [0, 1])"
+            f"{stability_index:.3f} (期待範囲 [0, 1], 合計値: {stability_index_raw:.3f})"
         )
     finite_key = _find_metric_key(metrics_dict, 'stability_metrics_finite')
     if finite_key is not None and metrics_dict[finite_key] < 0.5:
@@ -291,13 +304,16 @@ def _audit_reward_metrics(metrics_dict: dict, metrics_history: list) -> list:
 
     # --- 5. Action Distortion ---
     sat_key = _find_metric_key(metrics_dict, 'action_saturation')
-    if sat_key is not None and metrics_dict[sat_key] > th['action_saturation_max']:
-        alerts.append(
-            f"[Action Distortion] CBFによるアクション補正の飽和率が高い: "
-            f"{metrics_dict[sat_key]*100:.1f}% — 方策が実行不能な指令を"
-            f"多発させているか、safety/cbf.py の制限が過剰に効いている"
-            f"可能性。"
-        )
+    if sat_key is not None:
+        sat_val_raw = metrics_dict[sat_key]
+        sat_val = sat_val_raw / avg_ep_len if 'episode_' in sat_key else sat_val_raw
+        if sat_val > th['action_saturation_max']:
+            alerts.append(
+                f"[Action Distortion] CBFによるアクション補正の飽和率が高い: "
+                f"{sat_val*100:.1f}% (エピソード平均) — 方策が実行不能な指令を"
+                f"多発させているか、safety/cbf.py の制限が過剰に効いている"
+                f"可能性。"
+            )
 
     # --- 6. Sensor/Kinematics Fallback ---
     fallback_key = _find_metric_key(metrics_dict, 'com_accel_is_fallback')

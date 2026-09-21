@@ -1,0 +1,7 @@
+⚠️  Reward Audit: 学習中に 151 件の異常兆候を検出しました。
+   - Exploitation: 94件
+   - Metric Corruption: 20件
+   - Action Distortion: 20件
+   - Potential Decay: 17件
+   詳細: /mnt/c/bipedal_robot/log/version_9/REWARD_AUDIT_ALERTS.txt
+   実機投入前に、上記カテゴリに対応する報酬関数・安定性指標・CBF実装を確認することを推奨します。

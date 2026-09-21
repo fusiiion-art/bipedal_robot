@@ -131,15 +131,23 @@ class EpisodeInfoResetWrapper(Wrapper):
 
     def step(self, state, action):
         was_done = state.done  # 直前ステップでこのスロットのepisodeが終わっていたか
-        rng_for_fresh, next_rng = jax.random.split(state.info["rng_key"])
-        fresh_state = self.env.unwrapped.reset(rng_for_fresh)
+        is_batched = state.obs.ndim > 1
+        if is_batched:
+            keys = jax.vmap(jax.random.split)(state.info["rng_key"])
+            rng_for_fresh = keys[:, 0]
+            fresh_state = jax.vmap(self.env.unwrapped.reset)(rng_for_fresh)
+        else:
+            rng_for_fresh, _ = jax.random.split(state.info["rng_key"])
+            fresh_state = self.env.unwrapped.reset(rng_for_fresh)
+
         state = self.env.step(state, action)
 
+        d = was_done > 0.5
         def pick(fresh, cur):
-            d = was_done
-            if d.ndim:
-                d = jp.reshape(d, [d.shape[0]] + [1] * (cur.ndim - 1))
-            return jp.where(d, fresh, cur)
+            cond = d
+            if cond.ndim:
+                cond = jp.reshape(cond, [cond.shape[0]] + [1] * (cur.ndim - 1))
+            return jp.where(cond, fresh, cur)
 
         new_info = dict(state.info)
         for key in self.RESETTABLE_KEYS:
