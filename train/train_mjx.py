@@ -287,19 +287,46 @@ def _audit_reward_metrics(metrics_dict: dict, metrics_history: list) -> list:
             )
 
     # --- 4. Potential Decay ---
+    # [2026-09-22 修正] 旧実装は 'eval/episode_potential' 等のエピソード累積値を
+    # そのままstep間で差分・比較していたため、episode_alive(平均生存長)が学習の
+    # 進行とともに伸びる(131->500等)だけでdelta_potentialやpbrs_valが見かけ上
+    # 増大/悪化し続け、常に誤検知するバグがあった。
+    # さらに、gamma<1のPBRSでは potential がエピソード内でおおむね一定でも
+    # r_pbrs = gamma*potential - last_potential の総和は理論上
+    # (gamma-1)*potential 程度の負値に収束するのが正常な設計であり、
+    # 「pbrs_rewardが負」であること自体はバグの兆候ではない。
+    # 本実装では両指標を1ステップ平均に正規化した上で、この理論的な割引減衰量
+    # からの乖離のみを異常判定の対象にする。
     pot_key = _find_metric_key(metrics_dict, 'potential')
     pbrs_key = _find_metric_key(metrics_dict, 'pbrs_reward')
     if pot_key is not None and pbrs_key is not None and len(metrics_history) >= 1:
         prev = metrics_history[-1]
         if pot_key in prev:
-            delta_potential = metrics_dict[pot_key] - prev[pot_key]
-            pbrs_val = metrics_dict[pbrs_key]
-            if delta_potential > 0.1 and pbrs_val < -2.0:
+            def _per_step(mdict, key):
+                val = mdict[key]
+                if 'episode_' not in key:
+                    return val
+                ep_key = _find_metric_key(mdict, 'avg_episode_length') or _find_metric_key(mdict, 'episode_alive')
+                ep_len = max(float(mdict[ep_key]), 1.0) if ep_key is not None else 1.0
+                return val / ep_len
+
+            potential_per_step = _per_step(metrics_dict, pot_key)
+            prev_potential_per_step = _per_step(prev, pot_key)
+            pbrs_per_step = _per_step(metrics_dict, pbrs_key)
+            delta_potential_per_step = potential_per_step - prev_potential_per_step
+
+            gamma = 0.99
+            expected_pbrs_per_step = (gamma - 1.0) * max(potential_per_step, 0.0)
+            pbrs_deviation = pbrs_per_step - expected_pbrs_per_step
+
+            if delta_potential_per_step > 0.01 and pbrs_deviation < -0.5:
                 alerts.append(
-                    f"[Potential Decay] potentialは増加({delta_potential:+.3f})"
-                    f"だが pbrs_reward が大きく負({pbrs_val:.2f})。"
-                    f"envs/mjx_rewards.py の compute_potential() や "
-                    f"discounting(gamma)を確認。"
+                    f"[Potential Decay] potential/stepは増加"
+                    f"({delta_potential_per_step:+.4f}/step)だが pbrs_reward/step "
+                    f"({pbrs_per_step:.4f}) が割引由来の期待値"
+                    f"({expected_pbrs_per_step:.4f})から大きく乖離"
+                    f"({pbrs_deviation:+.4f})。envs/mjx_rewards.py の "
+                    f"compute_potential() や discounting(gamma)を確認。"
                 )
 
     # --- 5. Action Distortion ---

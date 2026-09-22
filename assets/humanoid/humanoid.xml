@@ -137,10 +137,10 @@
             <geom name="doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidariaikabu_hidariashiura_hidariashiura-1_collision" type="box" size="0.0230 0.0600 0.0148" pos="0.0000 -0.0215 -0.0052" friction="1.5 0.005 0.0001" mass="0.016" rgba="0.2 1.0 0.2 0.3"/>
 
                                     <!-- FSR センサーサイト -->
-                                    <site name="l_foot_fsr_fl" pos="0.012 0.027 -0.0541" type="box" size="0.005 0.005 0.001" rgba="0 1 0 1"/>
-                                    <site name="l_foot_fsr_fr" pos="-0.012 0.027 -0.0541" type="box" size="0.005 0.005 0.001" rgba="0 1 0 1"/>
-                                    <site name="l_foot_fsr_bl" pos="0.012 -0.070 -0.0541" type="box" size="0.005 0.005 0.001" rgba="0 1 0 1"/>
-                                    <site name="l_foot_fsr_br" pos="-0.012 -0.070 -0.0541" type="box" size="0.005 0.005 0.001" rgba="0 1 0 1"/>
+                                    <site name="l_foot_fsr_fl" pos="0.012 0.027 -0.0200" type="box" size="0.013 0.014 0.003" rgba="0 1 0 1"/>
+                                    <site name="l_foot_fsr_fr" pos="-0.012 0.027 -0.0200" type="box" size="0.013 0.014 0.003" rgba="0 1 0 1"/>
+                                    <site name="l_foot_fsr_bl" pos="0.012 -0.070 -0.0200" type="box" size="0.013 0.014 0.003" rgba="0 1 0 1"/>
+                                    <site name="l_foot_fsr_br" pos="-0.012 -0.070 -0.0200" type="box" size="0.013 0.014 0.003" rgba="0 1 0 1"/>
                                 </body>
                             </body>
                         </body>
@@ -181,10 +181,10 @@
             <geom name="doutai-v5_migidaitou_migikokansetu_migimomo_migihizabu_migigaikabu_migiashiura_migiashiura-1_collision" type="box" size="0.0230 0.0600 0.0148" pos="0.0000 -0.0215 -0.0052" friction="1.5 0.005 0.0001" mass="0.016" rgba="0.2 1.0 0.2 0.3"/>
 
                                     <!-- FSR センサーサイト -->
-                                    <site name="r_foot_fsr_fl" pos="0.012 0.027 -0.0541" type="box" size="0.005 0.005 0.001" rgba="0 1 0 1"/>
-                                    <site name="r_foot_fsr_fr" pos="-0.012 0.027 -0.0541" type="box" size="0.005 0.005 0.001" rgba="0 1 0 1"/>
-                                    <site name="r_foot_fsr_bl" pos="0.012 -0.070 -0.0541" type="box" size="0.005 0.005 0.001" rgba="0 1 0 1"/>
-                                    <site name="r_foot_fsr_br" pos="-0.012 -0.070 -0.0541" type="box" size="0.005 0.005 0.001" rgba="0 1 0 1"/>
+                                    <site name="r_foot_fsr_fl" pos="0.012 0.027 -0.0200" type="box" size="0.013 0.014 0.003" rgba="0 1 0 1"/>
+                                    <site name="r_foot_fsr_fr" pos="-0.012 0.027 -0.0200" type="box" size="0.013 0.014 0.003" rgba="0 1 0 1"/>
+                                    <site name="r_foot_fsr_bl" pos="0.012 -0.070 -0.0200" type="box" size="0.013 0.014 0.003" rgba="0 1 0 1"/>
+                                    <site name="r_foot_fsr_br" pos="-0.012 -0.070 -0.0200" type="box" size="0.013 0.014 0.003" rgba="0 1 0 1"/>
                                 </body>
                             </body>
                         </body>
