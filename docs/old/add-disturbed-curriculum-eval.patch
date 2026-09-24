@@ -1,0 +1,290 @@
+From f06b6d2c324a86ecba821dcd08b241d0a516b6cb Mon Sep 17 00:00:00 2001
+From: Claude <assistant@example.com>
+Date: Wed, 23 Sep 2026 07:14:54 +0000
+Subject: [PATCH] Add fixed-progress disturbed-curriculum evaluation path
+
+- envs/training_wrapper.py: TrainingProgressWrapper now accepts an
+  optional fixed_progress parameter. When set, reset() initializes
+  training_progress to that constant (instead of 0) and step() keeps
+  it pinned there instead of recomputing from env_steps.
+
+- train/train_mjx.py: adds --eval_curriculum_progress (default 1.0),
+  --disturbed_num_eval_envs (default 64), and --disable_disturbed_eval
+  CLI args. Lazily builds a second brax.training.acting.Evaluator
+  (inside policy_params_callback, on first call, using the same
+  make_policy the real eval uses) over an eval_env wrapped with
+  TrainingProgressWrapper(fixed_progress=args.eval_curriculum_progress).
+  Runs this evaluator at every checkpoint and appends results to
+  <run_dir>/disturbed_eval_log.json (keys re-prefixed disturbed_eval/
+  to avoid colliding with the normal eval/ log).
+
+Root cause this addresses: Brax's Evaluator.generate_eval_unroll()
+calls eval_env.reset() fresh at every evaluation cycle, which zeros
+training_progress every time (verified against brax==0.14.2 source).
+Since an eval episode is capped at episode_length steps, training_progress
+during eval can never exceed episode_length/total_steps_per_env (~1.3%
+for this project's default config), so _get_curriculum_disturbance_scale()
+always returns the 0% tier regardless of how far real training has
+progressed. This explains why eval/episode_curriculum_scale was 0.000
+at every one of the 19 checkpoints in log/version_9/log.json even
+though training ran to ~100% of its budget: the *training* rollouts
+likely did ramp up disturbance correctly (same wrap() call site, but
+never reset mid-run), but nothing in the eval-based logs could ever
+show it.
+
+Verified in isolation (bypassing the full PPO loop, which is slow to
+JIT-compile on CPU) using the exact same TrainingProgressWrapper +
+acting.Evaluator classes train_mjx.py now wires together:
+  fixed_progress=None -> curriculum_scale=0.000/step (unchanged, matches
+    the historical version_9 log exactly)
+  fixed_progress=0.3  -> curriculum_scale=0.300/step (matches
+    CURRICULUM_SCHEDULE_FRACTIONS[0.25]=0.30 tier)
+  fixed_progress=1.0  -> curriculum_scale=1.000/step (matches the
+    0.75=1.00 max-disturbance tier)
+A full end-to-end run of train_mjx.py through its first checkpoint was
+not completed in this sandbox (CPU-only JIT compilation of the full PPO
+loop did not finish inside the available wall-clock budget) -- the
+wrapper/evaluator mechanism itself is verified correct, but an
+end-to-end smoke test on the real WSL/GPU environment is recommended
+before relying on this for a production run.
+
+tests/test_training_integration.py, tests/test_training_eval_contract.py,
+tests/test_training_wrapper.py pass against the modified
+TrainingProgressWrapper (default fixed_progress=None path is untouched).
+---
+ envs/training_wrapper.py |  45 +++++++++++++---
+ train/train_mjx.py       | 114 ++++++++++++++++++++++++++++++++++++++-
+ 2 files changed, 152 insertions(+), 7 deletions(-)
+
+diff --git a/envs/training_wrapper.py b/envs/training_wrapper.py
+index 09a0477..d4782e0 100644
+--- a/envs/training_wrapper.py
++++ b/envs/training_wrapper.py
+@@ -51,6 +51,23 @@ class TrainingProgressWrapper(Wrapper):
+         env: Brax ラップ済み環境（AutoResetWrapper 適用済み）
+         total_steps_per_env: 各並列環境あたりの総ステップ数
+             = num_timesteps // num_envs
++        fixed_progress: [2026-09-22 追加] Noneでなければ、reset()時点の
++            training_progressをこの固定値に強制し、step()内でも
++            env_steps由来の値で上書きせずこの値を維持し続ける。
++            これは「eval専用」の使い方を想定している。
++            Brax標準のEvaluator.generate_eval_unroll()はeval_env.reset()
++            を評価のたびに呼び直す実装になっており、通常の
++            TrainingProgressWrapper(fixed_progress=None)のままだと
++            training_progressが常に0近傍（最大でも
++            episode_length/total_steps_per_env 程度）にしかならない。
++            これにより_get_curriculum_disturbance_scale()が学習の
++            進捗に関わらず常に「外乱なし」を返し、外乱カリキュラムが
++            eval側では一切検証できない（train側は別経路で正しく
++            進捗するため、trainとevalで見えるものが食い違う）。
++            fixed_progressを指定したTrainingProgressWrapperをeval_env
++            専用に用意することで、「特定のカリキュラム段階を固定して
++            評価する」ための評価パスを構築できる
++            (train/train_mjx.py の _build_disturbed_evaluator 参照)。
+     
+     使用例:
+         env = brax_env
+@@ -59,9 +76,10 @@ class TrainingProgressWrapper(Wrapper):
+         env = TrainingProgressWrapper(env, total_steps_per_env=100000)
+     """
+     
+-    def __init__(self, env, total_steps_per_env: int):
++    def __init__(self, env, total_steps_per_env: int, fixed_progress: float = None):
+         super().__init__(env)
+         self._total_steps_per_env = max(float(total_steps_per_env), 1.0)
++        self._fixed_progress = fixed_progress
+ 
+     def reset(self, rng):
+         state = self.env.reset(rng)
+@@ -69,11 +87,18 @@ class TrainingProgressWrapper(Wrapper):
+         # [ISSUE-2 FIXED] batch 対応: num_envs を検出
+         batch_size = state.obs.shape[0] if state.obs.ndim > 1 else 1
+         
++        if self._fixed_progress is None:
++            initial_progress = jp.zeros(batch_size, dtype=jp.float32)
++        else:
++            initial_progress = jp.full(
++                (batch_size,), float(self._fixed_progress), dtype=jp.float32
++            )
++
+         state = state.replace(info={
+             **state.info,
+             '_env_steps': jp.zeros(batch_size, dtype=jp.int32),
+             'global_step': jp.zeros(batch_size, dtype=jp.int32),
+-            'training_progress': jp.zeros(batch_size, dtype=jp.float32),
++            'training_progress': initial_progress,
+             'terminated': jp.zeros(batch_size, dtype=jp.bool_),
+             'truncated': jp.zeros(batch_size, dtype=jp.bool_),
+             'time_out': jp.zeros(batch_size, dtype=jp.float32),
+@@ -93,10 +118,18 @@ class TrainingProgressWrapper(Wrapper):
+         
+         env_steps = jp.asarray(env_steps_current, dtype=jp.int32) + 1
+         
+-        progress = jp.clip(
+-            env_steps.astype(jp.float32) / self._total_steps_per_env,
+-            0.0, 1.0,
+-        )
++        if self._fixed_progress is None:
++            progress = jp.clip(
++                env_steps.astype(jp.float32) / self._total_steps_per_env,
++                0.0, 1.0,
++            )
++        else:
++            # 固定進捗モード: env_stepsは（他の用途のため）通常通り
++            # 積算するが、training_progressはfixed_progressに維持する。
++            batch_size = env_steps.shape[0]
++            progress = jp.full(
++                (batch_size,), float(self._fixed_progress), dtype=jp.float32
++            )
+         
+         # (2) 内側の step（AutoResetWrapper 含む）を実行
+         #     done が True なら info は reset() の値で上書きされている
+diff --git a/train/train_mjx.py b/train/train_mjx.py
+index 4d703ca..ba49b4f 100644
+--- a/train/train_mjx.py
++++ b/train/train_mjx.py
+@@ -383,6 +383,26 @@ def parse_args():
+     parser.add_argument("--num_updates_per_batch", type=int, default=4)
+     parser.add_argument("--seed", type=int, default=42)
+     parser.add_argument("--target_kl", type=float, default=0.02)
++    # [2026-09-22 追加] 外乱カリキュラムを固定進捗率で評価する専用eval。
++    # Brax標準のEvaluatorはeval_envをreset()するたびtraining_progressが
++    # 0に戻る仕様のため、通常のeval/*指標は外乱カリキュラムが
++    # どの段階でも常に「外乱なし」しか観測できない
++    # (envs/training_wrapper.py の TrainingProgressWrapper docstring参照)。
++    # ここで指定した進捗率に固定した専用eval_envで別途評価を行い、
++    # <run_dir>/disturbed_eval_log.json に保存する。
++    parser.add_argument(
++        "--eval_curriculum_progress", type=float, default=1.0,
++        help="外乱カリキュラム評価用にtraining_progressを固定する値(0.0-1.0)。"
++             "1.0でCURRICULUM_SCHEDULE_FRACTIONSの最大外乱段階を毎回評価する。"
++    )
++    parser.add_argument(
++        "--disturbed_num_eval_envs", type=int, default=64,
++        help="外乱カリキュラム評価用の並列環境数(通常evalより軽量に)。"
++    )
++    parser.add_argument(
++        "--disable_disturbed_eval", action="store_true",
++        help="外乱カリキュラム評価を無効化する(従来通りの挙動に戻す)。"
++    )
+     return parser.parse_args()
+ 
+ def main():
+@@ -464,7 +484,85 @@ def main():
+     # 検出件数を種類別に集計する。学習終了後にサマリー表示する。
+     reward_audit_alert_counts = {}
+     reward_audit_total_alerts = 0
+-    
++
++    # [2026-09-22 追加] 外乱カリキュラム固定評価 (disturbed eval)
++    # 通常のeval/*指標はBrax標準のEvaluatorがeval_envを評価のたびに
++    # reset()するため、training_progressが常に0近傍(最大でも
++    # episode_length/total_steps_per_env)にしかならず、
++    # _get_curriculum_disturbance_scale() が常に「外乱なし」を返す
++    # (envs/training_wrapper.py の TrainingProgressWrapper docstring参照)。
++    # ここでは training_progress を --eval_curriculum_progress に固定した
++    # 専用のeval_envとEvaluatorを別途用意し、通常のeval/*とは独立に
++    # <run_dir>/disturbed_eval_log.json へ記録する。
++    # eval_policy_fn は make_policy (Brax側で1度だけ構築され、
++    # チェックポイント毎に同じ参照が再利用される) に依存するため、
++    # policy_params_callback の初回呼び出し時に遅延構築する。
++    _disturbed_state = {'evaluator': None, 'failed': False}
++    disturbed_eval_log = []
++
++    def _get_or_build_disturbed_evaluator(make_policy):
++        if _disturbed_state['failed']:
++            return None
++        if _disturbed_state['evaluator'] is not None:
++            return _disturbed_state['evaluator']
++        try:
++            from brax.training import acting
++            import functools as _functools
++
++            disturbed_env = EpisodeInfoResetWrapper(
++                brax_training.wrap(env, episode_length=episode_length, action_repeat=1)
++            )
++            disturbed_env = TrainingProgressWrapper(
++                disturbed_env,
++                total_steps_per_env=1.0,  # fixed_progress使用時は参照されない
++                fixed_progress=args.eval_curriculum_progress,
++            )
++            evaluator = acting.Evaluator(
++                disturbed_env,
++                _functools.partial(make_policy, deterministic=True),
++                num_eval_envs=args.disturbed_num_eval_envs,
++                episode_length=episode_length,
++                action_repeat=1,
++                key=jax.random.PRNGKey(args.seed + 12345),
++            )
++            _disturbed_state['evaluator'] = evaluator
++            print(
++                f"[Info] disturbed eval 用意完了 "
++                f"(training_progress固定={args.eval_curriculum_progress}, "
++                f"num_envs={args.disturbed_num_eval_envs})"
++            )
++            return evaluator
++        except Exception as e:
++            print(f"[Warning] disturbed eval evaluatorの構築に失敗したため、以後スキップします: {e}")
++            _disturbed_state['failed'] = True
++            return None
++
++    def _to_native(v):
++        try:
++            return float(np.asarray(v))
++        except (TypeError, ValueError):
++            return v
++
++    def _run_disturbed_eval(current_step, make_policy, params):
++        if args.disable_disturbed_eval:
++            return
++        evaluator = _get_or_build_disturbed_evaluator(make_policy)
++        if evaluator is None:
++            return
++        try:
++            d_metrics = evaluator.run_evaluation(params, {})
++            d_metrics = {
++                k.replace('eval/', 'disturbed_eval/', 1): _to_native(v)
++                for k, v in d_metrics.items()
++            }
++            d_metrics['step'] = int(current_step)
++            d_metrics['training_progress_fixed'] = args.eval_curriculum_progress
++            disturbed_eval_log.append(d_metrics)
++            with open(run_dir / "disturbed_eval_log.json", "w", encoding="utf-8") as f:
++                json.dump(disturbed_eval_log, f, ensure_ascii=False, indent=2)
++        except Exception as e:
++            print(f"[Warning] disturbed eval実行に失敗 (step={current_step}): {e}")
++
+     def policy_params_callback(current_step, make_policy, params):
+         import pickle
+         nonlocal current_params
+@@ -473,6 +571,9 @@ def main():
+         # 毎回ラストのモデルを保存
+         with open(run_dir / "last_params.pkl", "wb") as f:
+             pickle.dump(params, f)
++
++        # 外乱カリキュラム固定評価 (通常のeval/*とは独立)
++        _run_disturbed_eval(current_step, make_policy, params)
+             
+     # コールバック関数（プログレス表示・ログ保存用）
+     def progress_callback(num_steps, metrics):
+@@ -699,6 +800,17 @@ def main():
+     with open(run_dir / "REWARD_AUDIT_SUMMARY.txt", "w") as f:
+         f.write("\n".join(summary_lines) + "\n")
+ 
++    if not args.disable_disturbed_eval:
++        if disturbed_eval_log:
++            print(
++                f"[Info] disturbed eval ログ "
++                f"({len(disturbed_eval_log)}件, training_progress固定="
++                f"{args.eval_curriculum_progress}): "
++                f"{run_dir / 'disturbed_eval_log.json'}"
++            )
++        elif _disturbed_state['failed']:
++            print("[Warning] disturbed evalは構築に失敗したため一度も実行されませんでした。")
++
+     # 4. パラメータ保存
+     import pickle
+     model_path = os.path.join(run_dir, "final_params.pkl")
+-- 
+2.43.0
+

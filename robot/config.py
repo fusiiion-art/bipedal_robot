@@ -153,6 +153,7 @@ class RobotConfig:
         # 安定維持を最優先
         "upright": 12.0,
         "target_pose": 4.0,
+        # com_stab: r_still(常時) および r_com_stab(安定時ボーナス)の重み (安定時は実質20.0相当)
         "com_stab": 10.0,
         "both_feet_contact": 8.0,
 
@@ -162,6 +163,8 @@ class RobotConfig:
         "recovery": 0.5,
 
         # ペナルティは大きく下げて、PTPな振動で負値が吹き上がらないようにする
+        # 注: step_penalty (0~20) と no_step_penalty (100) は歩行禁止のハード制約として
+        #     REWARD_WEIGHTS を介さず mjx_rewards.py 内で直接加算される (実質重み1.0)。
         "ang_momentum_z": 0.01,
         "ang_momentum_xy": 0.01,
         "cbf": 0.2,

@@ -369,7 +369,7 @@ def _audit_reward_metrics(metrics_dict: dict, metrics_history: list) -> list:
     return alerts
 
 
-def parse_args():
+def parse_args(args=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp_name", type=str, default="", help="Experiment subfolder under log. Leave empty to write directly to log/version_x.")
     parser.add_argument("--num_envs", type=int, default=None, help="並列環境数 (GPUなら2048〜4096推奨, CPU自動設定)")
@@ -383,7 +383,27 @@ def parse_args():
     parser.add_argument("--num_updates_per_batch", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--target_kl", type=float, default=0.02)
-    return parser.parse_args()
+    # [2026-09-22 追加] 外乱カリキュラムを固定進捗率で評価する専用eval。
+    # Brax標準のEvaluatorはeval_envをreset()するたびtraining_progressが
+    # 0に戻る仕様のため、通常のeval/*指標は外乱カリキュラムが
+    # どの段階でも常に「外乱なし」しか観測できない
+    # (envs/training_wrapper.py の TrainingProgressWrapper docstring参照)。
+    # ここで指定した進捗率に固定した専用eval_envで別途評価を行い、
+    # <run_dir>/disturbed_eval_log.json に保存する。
+    parser.add_argument(
+        "--eval_curriculum_progress", type=float, default=1.0,
+        help="外乱カリキュラム評価用にtraining_progressを固定する値(0.0-1.0)。"
+             "1.0でCURRICULUM_SCHEDULE_FRACTIONSの最大外乱段階を毎回評価する。"
+    )
+    parser.add_argument(
+        "--disturbed_num_eval_envs", type=int, default=64,
+        help="外乱カリキュラム評価用の並列環境数(通常evalより軽量に)。"
+    )
+    parser.add_argument(
+        "--disable_disturbed_eval", action="store_true",
+        help="外乱カリキュラム評価を無効化する(従来通りの挙動に戻す)。"
+    )
+    return parser.parse_args(args)
 
 def main():
     args = parse_args()
@@ -464,21 +484,105 @@ def main():
     # 検出件数を種類別に集計する。学習終了後にサマリー表示する。
     reward_audit_alert_counts = {}
     reward_audit_total_alerts = 0
-    
+
+    # [2026-09-22 追加] 外乱カリキュラム固定評価 (disturbed eval)
+    # 通常のeval/*指標はBrax標準のEvaluatorがeval_envを評価のたびに
+    # reset()するため、training_progressが常に0近傍(最大でも
+    # episode_length/total_steps_per_env)にしかならず、
+    # _get_curriculum_disturbance_scale() が常に「外乱なし」を返す
+    # (envs/training_wrapper.py の TrainingProgressWrapper docstring参照)。
+    # ここでは training_progress を --eval_curriculum_progress に固定した
+    # 専用のeval_envとEvaluatorを別途用意し、通常のeval/*とは独立に
+    # <run_dir>/disturbed_eval_log.json へ記録する。
+    # eval_policy_fn は make_policy (Brax側で1度だけ構築され、
+    # チェックポイント毎に同じ参照が再利用される) に依存するため、
+    # policy_params_callback の初回呼び出し時に遅延構築する。
+    _disturbed_state = {'evaluator': None, 'failed': False}
+    disturbed_eval_log = []
+
+    def _get_or_build_disturbed_evaluator(make_policy):
+        if _disturbed_state['failed']:
+            return None
+        if _disturbed_state['evaluator'] is not None:
+            return _disturbed_state['evaluator']
+        try:
+            from brax.training import acting
+            import functools as _functools
+
+            disturbed_env = EpisodeInfoResetWrapper(
+                brax_training.wrap(env, episode_length=episode_length, action_repeat=1)
+            )
+            disturbed_env = TrainingProgressWrapper(
+                disturbed_env,
+                total_steps_per_env=1.0,  # fixed_progress使用時は参照されない
+                fixed_progress=args.eval_curriculum_progress,
+            )
+            evaluator = acting.Evaluator(
+                disturbed_env,
+                _functools.partial(make_policy, deterministic=True),
+                num_eval_envs=args.disturbed_num_eval_envs,
+                episode_length=episode_length,
+                action_repeat=1,
+                key=jax.random.PRNGKey(args.seed + 12345),
+            )
+            _disturbed_state['evaluator'] = evaluator
+            print(
+                f"[Info] disturbed eval 用意完了 "
+                f"(training_progress固定={args.eval_curriculum_progress}, "
+                f"num_envs={args.disturbed_num_eval_envs})"
+            )
+            return evaluator
+        except Exception as e:
+            print(f"[Warning] disturbed eval evaluatorの構築に失敗したため、以後スキップします: {e}")
+            _disturbed_state['failed'] = True
+            return None
+
+    def _to_native(v):
+        try:
+            return float(np.asarray(v))
+        except (TypeError, ValueError):
+            return v
+
+    def _run_disturbed_eval(current_step, make_policy, params):
+        if args.disable_disturbed_eval:
+            return
+        evaluator = _get_or_build_disturbed_evaluator(make_policy)
+        if evaluator is None:
+            return
+        try:
+            d_metrics = evaluator.run_evaluation(params, {})
+            d_metrics = {
+                k.replace('eval/', 'disturbed_eval/', 1): _to_native(v)
+                for k, v in d_metrics.items()
+            }
+            d_metrics['step'] = int(current_step)
+            d_metrics['training_progress_fixed'] = args.eval_curriculum_progress
+            disturbed_eval_log.append(d_metrics)
+            run_dir.mkdir(parents=True, exist_ok=True)
+            with open(run_dir / "disturbed_eval_log.json", "w", encoding="utf-8") as f:
+                json.dump(disturbed_eval_log, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[Warning] disturbed eval実行に失敗 (step={current_step}): {e}")
+
     def policy_params_callback(current_step, make_policy, params):
         import pickle
         nonlocal current_params
         current_params = params
         
+        run_dir.mkdir(parents=True, exist_ok=True)
         # 毎回ラストのモデルを保存
         with open(run_dir / "last_params.pkl", "wb") as f:
             pickle.dump(params, f)
+
+        # 外乱カリキュラム固定評価 (通常のeval/*とは独立)
+        _run_disturbed_eval(current_step, make_policy, params)
             
     # コールバック関数（プログレス表示・ログ保存用）
     def progress_callback(num_steps, metrics):
         import pickle
         nonlocal best_reward, worst_reward
         nonlocal reward_audit_alert_counts, reward_audit_total_alerts
+        run_dir.mkdir(parents=True, exist_ok=True)
         reward = metrics.get('eval/episode_reward', metrics.get('training/total_reward', float('nan')))
 
         # --- NaN/Inf 即時停止チェック（改良規約 §18: 即時停止条件） ---
@@ -698,6 +802,17 @@ def main():
     print("\n" + "\n".join(summary_lines))
     with open(run_dir / "REWARD_AUDIT_SUMMARY.txt", "w") as f:
         f.write("\n".join(summary_lines) + "\n")
+
+    if not args.disable_disturbed_eval:
+        if disturbed_eval_log:
+            print(
+                f"[Info] disturbed eval ログ "
+                f"({len(disturbed_eval_log)}件, training_progress固定="
+                f"{args.eval_curriculum_progress}): "
+                f"{run_dir / 'disturbed_eval_log.json'}"
+            )
+        elif _disturbed_state['failed']:
+            print("[Warning] disturbed evalは構築に失敗したため一度も実行されませんでした。")
 
     # 4. パラメータ保存
     import pickle

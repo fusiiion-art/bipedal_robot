@@ -426,6 +426,9 @@ class MJXRewardSystem:
             p_drift * w['drift'] +
             p_slip * w['slip'] * lambda_phase +
             stance_width_penalty * w.get('stance_width', 0.5) +
+            # [調査まとめ 項目4] step_penalty (0~20) と no_step_penalty (100) は、
+            # 固定足立位タスクにおいて歩行・ステップ動作を厳格に排除するための
+            # 強制ハードペナルティとして、REWARD_WEIGHTSを介さず実質重み1.0で直接加算している。
             step_penalty +
             no_step_penalty
         ) * penalty_scale
@@ -440,11 +443,14 @@ class MJXRewardSystem:
             r_alive * w['alive'] +
             r_pbrs +
             r_upright * w['upright'] +
+            # [調査まとめ 項目5] r_still は全フェーズ共通の静止性維持として w['com_stab'] を適用。
             r_still * w['com_stab'] +
             r_target_pose * w['target_pose'] +
             r_both_feet_contact * w.get('both_feet_contact', 0.0) +
 
             lambda_phase * (
+                # [調査まとめ 項目5] 安定時 (lambda_phase≈1) には r_com_stab による追加ボーナスとして
+                # さらに w['com_stab'] が加算される (安定時は実質 2 * com_stab 相当の強化)。
                 r_com_stab * w['com_stab']
             ) +
 

@@ -56,3 +56,21 @@ def test_training_progress_wrapper_progress_saturates():
     for _ in range(5):
         state = env.step(state, jp.array([0.0]))
     assert float(np.asarray(state.info["training_progress"]).squeeze()) >= 1.0
+
+
+def test_training_progress_wrapper_fixed_progress():
+    """fixed_progress 指定時に reset() および step() を経ても進捗率が固定値に維持されることを確認。"""
+    target_progress = 0.75
+    env = TrainingProgressWrapper(
+        Wrapper(_DummyEnv()), total_steps_per_env=10, fixed_progress=target_progress
+    )
+    state = env.reset(jax.random.PRNGKey(0))
+    # reset時点ですでに target_progress に固定されていること
+    assert np.isclose(float(np.asarray(state.info["training_progress"]).squeeze()), target_progress)
+
+    # step() を進めても _env_steps は増加するが進捗率は target_progress に維持されること
+    for expected_step in range(1, 6):
+        state = env.step(state, jp.array([0.0]))
+        assert int(np.asarray(state.info["_env_steps"]).squeeze()) == expected_step
+        assert np.isclose(float(np.asarray(state.info["training_progress"]).squeeze()), target_progress)
+

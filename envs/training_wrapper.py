@@ -51,6 +51,23 @@ class TrainingProgressWrapper(Wrapper):
         env: Brax ラップ済み環境（AutoResetWrapper 適用済み）
         total_steps_per_env: 各並列環境あたりの総ステップ数
             = num_timesteps // num_envs
+        fixed_progress: [2026-09-22 追加] Noneでなければ、reset()時点の
+            training_progressをこの固定値に強制し、step()内でも
+            env_steps由来の値で上書きせずこの値を維持し続ける。
+            これは「eval専用」の使い方を想定している。
+            Brax標準のEvaluator.generate_eval_unroll()はeval_env.reset()
+            を評価のたびに呼び直す実装になっており、通常の
+            TrainingProgressWrapper(fixed_progress=None)のままだと
+            training_progressが常に0近傍（最大でも
+            episode_length/total_steps_per_env 程度）にしかならない。
+            これにより_get_curriculum_disturbance_scale()が学習の
+            進捗に関わらず常に「外乱なし」を返し、外乱カリキュラムが
+            eval側では一切検証できない（train側は別経路で正しく
+            進捗するため、trainとevalで見えるものが食い違う）。
+            fixed_progressを指定したTrainingProgressWrapperをeval_env
+            専用に用意することで、「特定のカリキュラム段階を固定して
+            評価する」ための評価パスを構築できる
+            (train/train_mjx.py の _build_disturbed_evaluator 参照)。
     
     使用例:
         env = brax_env
@@ -59,9 +76,10 @@ class TrainingProgressWrapper(Wrapper):
         env = TrainingProgressWrapper(env, total_steps_per_env=100000)
     """
     
-    def __init__(self, env, total_steps_per_env: int):
+    def __init__(self, env, total_steps_per_env: int, fixed_progress: float = None):
         super().__init__(env)
         self._total_steps_per_env = max(float(total_steps_per_env), 1.0)
+        self._fixed_progress = fixed_progress
 
     def reset(self, rng):
         state = self.env.reset(rng)
@@ -69,11 +87,18 @@ class TrainingProgressWrapper(Wrapper):
         # [ISSUE-2 FIXED] batch 対応: num_envs を検出
         batch_size = state.obs.shape[0] if state.obs.ndim > 1 else 1
         
+        if self._fixed_progress is None:
+            initial_progress = jp.zeros(batch_size, dtype=jp.float32)
+        else:
+            initial_progress = jp.full(
+                (batch_size,), float(self._fixed_progress), dtype=jp.float32
+            )
+
         state = state.replace(info={
             **state.info,
             '_env_steps': jp.zeros(batch_size, dtype=jp.int32),
             'global_step': jp.zeros(batch_size, dtype=jp.int32),
-            'training_progress': jp.zeros(batch_size, dtype=jp.float32),
+            'training_progress': initial_progress,
             'terminated': jp.zeros(batch_size, dtype=jp.bool_),
             'truncated': jp.zeros(batch_size, dtype=jp.bool_),
             'time_out': jp.zeros(batch_size, dtype=jp.float32),
@@ -93,10 +118,18 @@ class TrainingProgressWrapper(Wrapper):
         
         env_steps = jp.asarray(env_steps_current, dtype=jp.int32) + 1
         
-        progress = jp.clip(
-            env_steps.astype(jp.float32) / self._total_steps_per_env,
-            0.0, 1.0,
-        )
+        if self._fixed_progress is None:
+            progress = jp.clip(
+                env_steps.astype(jp.float32) / self._total_steps_per_env,
+                0.0, 1.0,
+            )
+        else:
+            # 固定進捗モード: env_stepsは（他の用途のため）通常通り
+            # 積算するが、training_progressはfixed_progressに維持する。
+            batch_size = env_steps.shape[0]
+            progress = jp.full(
+                (batch_size,), float(self._fixed_progress), dtype=jp.float32
+            )
         
         # (2) 内側の step（AutoResetWrapper 含む）を実行
         #     done が True なら info は reset() の値で上書きされている
