@@ -44,3 +44,4 @@ Thumbs.db
 # --- Environment variables ---
 .env
 .env.local
+scratch/simulation_output/

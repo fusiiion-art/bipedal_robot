@@ -158,6 +158,7 @@ def _load_policy(exp_name, version, model_name, env):
     from train.visualize_rl import load_checkpoint, get_model_path
     from robot.policy_network import make_policy_network_factory
     from brax.training.agents.ppo import networks as ppo_networks
+    from brax.training.acme import running_statistics
 
     model_path = get_model_path(exp_name, version, model_name)
     if model_path is None:
@@ -166,7 +167,11 @@ def _load_policy(exp_name, version, model_name, env):
     print(f"[Gate0] Loading checkpoint: {model_path}")
     params = load_checkpoint(model_path)
 
-    network = make_policy_network_factory(env.observation_size, env.action_size)
+    network = make_policy_network_factory(
+        env.observation_size,
+        env.action_size,
+        preprocess_observations_fn=running_statistics.normalize,
+    )
     make_policy = ppo_networks.make_inference_fn(network)
 
     def strip_leading_dim(leaf):

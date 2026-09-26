@@ -13,11 +13,13 @@ if not hasattr(sys.modules.get("uvloop", None), "__name__"):
 
 from brax import envs
 from brax.training.agents.ppo import networks as ppo_networks
+from brax.training.acme import running_statistics
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from robot.config import RobotConfig
 from envs.mjx_env import SenpuuMaruMJXEnv  # noqa: F401
 from train.train_mjx import make_policy_network_factory
+from train.visualize_rl import load_checkpoint
 
 def render_trajectory_to_gif(traj: np.ndarray, gif_path: str, height: int = 480, width: int = 640, fps: int = 30):
     """保存済み軌跡データからMuJoCoオフスクリーンレンダラーでGIFを生成する。"""
@@ -93,17 +95,25 @@ def main():
         model_path = os.path.join(root_dir, "log", "mjx_ppo_rma_100hz", f"version_{args.version}", args.model)
     
     print(f"モデルをロード中: {model_path}")
-    with open(model_path, "rb") as f:
-        params = pickle.load(f)
+    params = load_checkpoint(model_path)
         
     jax.config.update('jax_platform_name', 'cpu')
     env = envs.get_environment('senpuu_maru_mjx')
     
-    ppo_network = make_policy_network_factory(observation_size=env.observation_size, action_size=env.action_size)
+    ppo_network = make_policy_network_factory(
+        observation_size=env.observation_size,
+        action_size=env.action_size,
+        preprocess_observations_fn=running_statistics.normalize,
+    )
     make_policy = ppo_networks.make_inference_fn(ppo_network)
     
-    normalizer_params, policy_params, value_params = params
-    policy = make_policy((normalizer_params, policy_params, value_params), deterministic=True)
+    def _strip_leading_dim(leaf):
+        if hasattr(leaf, "shape") and getattr(leaf, "ndim", 0) > 0 and leaf.shape[0] == 1:
+            return leaf.squeeze(0)
+        return leaf
+
+    params_stripped = jax.tree_util.tree_map(_strip_leading_dim, params)
+    policy = make_policy(params_stripped, deterministic=True)
     
     jit_reset = jax.jit(env.reset)
     jit_step = jax.jit(env.step)

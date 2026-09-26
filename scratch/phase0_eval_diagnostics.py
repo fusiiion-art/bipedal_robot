@@ -294,6 +294,7 @@ def _lazy_imports():
         make_policy_network_factory,
     )
     from brax.training.agents.ppo import networks as ppo_networks
+    from brax.training.acme import running_statistics
 
     return {
         "jax": jax,
@@ -305,6 +306,7 @@ def _lazy_imports():
         "load_checkpoint": load_checkpoint,
         "make_policy_network_factory": make_policy_network_factory,
         "ppo_networks": ppo_networks,
+        "running_statistics": running_statistics,
     }
 
 
@@ -639,7 +641,11 @@ def main():
     # obs/action次元はDR設定に依存しないstructuralな値なので、使い捨てのenv
     # インスタンスから一度だけ取得すれば十分(policy networkの構築もここでよい)。
     _probe_env = SenpuuMaruMJXEnv()
-    network = ctx["make_policy_network_factory"](_probe_env.observation_size, _probe_env.action_size)
+    network = ctx["make_policy_network_factory"](
+        _probe_env.observation_size,
+        _probe_env.action_size,
+        preprocess_observations_fn=ctx["running_statistics"].normalize,
+    )
     make_policy = ppo_networks.make_inference_fn(network)
 
     def strip_leading_dim(leaf):
