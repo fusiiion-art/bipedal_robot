@@ -19,6 +19,8 @@ from scratch.phase0_eval_diagnostics import (
     kaplan_meier_survival,
     diagnose_failure_timing,
     summarize_episode_alive,
+    track_sustained_contact_loss,
+    interpolate_threshold_crossing,
 )
 
 
@@ -85,3 +87,53 @@ def test_summarize_episode_alive_basic():
     result = summarize_episode_alive([100, 200, 300])
     assert result["n"] == 3
     assert result["mean"] == 200.0
+
+def test_track_sustained_contact_loss_momentary_blip_not_a_failure():
+    """grace_steps未満の瞬間的な非接触は本物の接地喪失として扱わない
+    (2026-09-26修正: 全step ANDラッチだった旧バグの回帰テスト)。"""
+    consecutive, real_loss = 0, False
+    grace_steps = 2
+    # 1step分だけ非接触 → まだreal_lossにはならない
+    consecutive, real_loss = track_sustained_contact_loss(False, consecutive, real_loss, grace_steps)
+    assert real_loss is False
+    # 接触が戻ればconsecutiveは0にリセットされる
+    consecutive, real_loss = track_sustained_contact_loss(True, consecutive, real_loss, grace_steps)
+    assert consecutive == 0
+    assert real_loss is False
+
+
+def test_track_sustained_contact_loss_sustained_is_a_failure():
+    """grace_steps以上連続した非接触は本物の接地喪失として確定する。"""
+    consecutive, real_loss = 0, False
+    grace_steps = 2
+    for _ in range(grace_steps):
+        consecutive, real_loss = track_sustained_contact_loss(False, consecutive, real_loss, grace_steps)
+    assert real_loss is True
+    # 一度real_loss=Trueになったら、その後接触が戻ってもTrueのまま
+    consecutive, real_loss = track_sustained_contact_loss(True, consecutive, real_loss, grace_steps)
+    assert real_loss is True
+
+
+def test_track_sustained_contact_loss_grace_steps_one_matches_old_behavior():
+    """grace_steps=1なら旧実装(全step AND)と同じ、1stepの非接触で即失敗になる。"""
+    consecutive, real_loss = 0, False
+    consecutive, real_loss = track_sustained_contact_loss(False, consecutive, real_loss, grace_steps=1)
+    assert real_loss is True
+
+
+def test_interpolate_threshold_crossing_basic():
+    """成功率が単調に下がる典型例で、線形補間によるJ_50計算が妥当な範囲に入る。"""
+    forces = [0.0, 10.0, 20.0, 30.0]
+    success = [1.0, 0.9, 0.4, 0.1]
+    j50 = interpolate_threshold_crossing(forces, success, target=0.5)
+    assert j50 is not None
+    # 0.9→0.4の区間(10〜20N)でtarget=0.5を跨ぐので、その範囲内であるべき
+    assert 10.0 <= j50 <= 20.0
+
+
+def test_interpolate_threshold_crossing_no_crossing_returns_none():
+    """全区間でtargetを跨がない場合は外挿せずNoneを返す。"""
+    forces = [0.0, 10.0, 20.0]
+    success = [1.0, 0.95, 0.9]  # 常に0.5を上回る
+    assert interpolate_threshold_crossing(forces, success, target=0.5) is None
+

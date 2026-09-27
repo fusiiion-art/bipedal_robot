@@ -1,0 +1,215 @@
+diff --git a/robot/config.py b/robot/config.py
+index 513760d..628d646 100644
+--- a/robot/config.py
++++ b/robot/config.py
+@@ -96,6 +96,13 @@ class RobotConfig:
+     RANDOM_COM_OFFSET = [-0.02, 0.02]  # Phase 1: 重心偏差を最小化
+     RANDOM_PUSH_MAX_FORCE = 0.0  # Phase 0: Gate 0 / Gate A を先に確定し、外乱導入は後に行う
+     DISTURBANCE_CURRICULUM = False  # Phase 0 では外乱を無効化して静止直立を安定化させる
++    # [2026-09-26追加] Gate B robustness envelope評価(scratch/gate_b_eval.py)が
++    # 既定で掃引する外力[N]のリスト。master_plan.md §0.1の目標外乱スペック
++    # (突っつきインパルス目標値・Phase-1物理限界値)が未記入のため、根拠のない
++    # 数値をここで勝手に補わず既定は空リストにしている。実行時は必ず
++    # `--force-levels`で明示的に指定すること(§9.2: 外乱上限を解析限界以上へ
++    # 自動拡大してはならない、の原則に従う)。
++    PUSH_FORCE_LEVELS = []
+     
+     # 熱・電圧のシミュレーションパラメータ
+     RANDOM_TEMP = [20.0, 80.0]  # ℃
+diff --git a/scratch/phase0_eval_diagnostics.py b/scratch/phase0_eval_diagnostics.py
+index 7af7dc0..ea7c60b 100644
+--- a/scratch/phase0_eval_diagnostics.py
++++ b/scratch/phase0_eval_diagnostics.py
+@@ -247,6 +247,33 @@ def diagnose_failure_timing(
+     }
+ 
+ 
++def track_sustained_contact_loss(
++    both_feet_now: bool,
++    consecutive_loss_steps: int,
++    real_loss: bool,
++    grace_steps: int,
++) -> Tuple[int, bool]:
++    """1step分の両足接地判定を受け取り、連続`grace_steps`以上の非接触が
++    続いた場合にのみ「本物の接地喪失」として確定させる。
++
++    [2026-09-26追加] 以前は`both_feet_contact and both_feet_now`という
++    全step ANDのラッチで、1step分の瞬間的なFSR推定値のブレだけで
++    episode全体が恒久的に「両足接地失敗」として扱われ、success判定を
++    実態以上に厳しく倒す既知バグがあった(grace_steps=1相当)。
++    master_plan.md §6.1がGate Bの外乱復帰猶予として定義している
++    「両足の鉛直接触力が同時に閾値未満、かつ連続20ms以上」という
++    考え方をGate Aのsuccess判定にも適用する。real_loss=Trueに一度
++    なった後は接触が戻ってもTrueのまま(=episodeを通じた恒久的な
++    「本物の接地喪失」フラグ)。
++    """
++    if both_feet_now:
++        return 0, real_loss
++    consecutive_loss_steps += 1
++    if consecutive_loss_steps >= grace_steps:
++        real_loss = True
++    return consecutive_loss_steps, real_loss
++
++
+ def summarize_episode_alive(episode_lengths: Sequence[int]) -> Dict[str, float]:
+     arr = np.asarray(episode_lengths, dtype=np.float64)
+     if len(arr) == 0:
+@@ -281,6 +308,31 @@ class EpisodeResult:
+     torque_saturation_rate: float = 0.0
+ 
+ 
++def interpolate_threshold_crossing(
++    x_values: Sequence[float],
++    y_values: Sequence[float],
++    target: float = 0.5,
++) -> Optional[float]:
++    """成功率(y_values)が`target`(既定0.5、master_plan.md §6.4のJ_50/θ_50定義)を
++    跨ぐ点を、外乱強度(x_values)に対する線形補間で求める。
++
++    x_valuesは外乱強度の昇順、y_valuesは外乱強度が強くなるほど単調非増加で
++    あることを想定するが、評価ノイズによる多少の前後は許容し、targetを跨ぐ
++    最初の隣接区間で補間する。全区間でtargetを跨がない場合は外挿せずNoneを
++    返す(グリッド範囲が不足しているサイン。範囲を広げて再評価すること)。
++    """
++    if len(x_values) != len(y_values) or len(x_values) < 2:
++        return None
++    pairs = sorted(zip(x_values, y_values), key=lambda p: p[0])
++    for (x0, y0), (x1, y1) in zip(pairs, pairs[1:]):
++        if (y0 - target) * (y1 - target) <= 0:
++            if y1 == y0:
++                return x0
++            frac = (target - y0) / (y1 - y0)
++            return x0 + frac * (x1 - x0)
++    return None
++
++
+ def _lazy_imports():
+     """JAX/MJX関連のimportを遅延させ、--help等をGPU無し環境でも高速に扱えるようにする。"""
+     import jax  # noqa: F401
+@@ -384,6 +436,11 @@ def run_episode(
+     max_roll = 0.0
+     max_pitch = 0.0
+     both_feet_contact = True
++    # [2026-09-26修正] track_sustained_contact_loss()参照。20ms未満の
++    # 瞬間的な非接触はGate Aのsuccess判定において失敗として数えない。
++    consecutive_contact_loss_steps = 0
++    real_contact_loss = False
++    contact_loss_grace_steps = max(1, round(0.020 / RobotConfig.CONTROL_DT))
+     recovery_start = None
+     recovery_time_steps = None
+     saturated_steps = 0
+@@ -416,7 +473,10 @@ def run_episode(
+         max_pitch = max(max_pitch, abs(float(rpy[1])))
+         contact_metric = float(np.asarray(getattr(state, "metrics", {}).get("both_feet_contact", 0.0)))
+         both_feet_now = contact_metric >= 0.5
+-        both_feet_contact = both_feet_contact and both_feet_now
++        consecutive_contact_loss_steps, real_contact_loss = track_sustained_contact_loss(
++            both_feet_now, consecutive_contact_loss_steps, real_contact_loss, contact_loss_grace_steps,
++        )
++        both_feet_contact = not real_contact_loss
+         if bool(state.info.get("was_disturbed", False)) and recovery_start is None:
+             recovery_start = step_index
+         if recovery_start is not None and recovery_time_steps is None:
+@@ -693,14 +753,26 @@ def main():
+         "conditions": {},
+         "disturbance_model": {
+             "force_levels_N": force_levels,
+-            "directions": int(RobotConfig.PUSH_DIRECTIONS),
+-            "duration_steps": int(RobotConfig.PUSH_DURATION_STEPS),
+-            "duration_s": float(RobotConfig.PUSH_DURATION_STEPS * RobotConfig.CONTROL_DT),
+-            "impulse_levels_Ns": [
+-                float(force * RobotConfig.PUSH_DURATION_STEPS * RobotConfig.CONTROL_DT)
+-                for force in force_levels
++            # [2026-09-26修正] 従来はRobotConfig.PUSH_DIRECTIONS /
++            # RobotConfig.PUSH_DURATION_STEPSという存在しない属性を参照しており、
++            # --force-levels未指定時にAttributeErrorで即クラッシュしていた
++            # (force_levels=list(RobotConfig.PUSH_FORCE_LEVELS)がmain()冒頭で
++            # 無条件に評価されるため)。実際の外乱印加(envs/mjx_env.py)は
++            # 「各制御stepごとに3%の確率でtrigger、方向は3軸連続一様分布から
++            # 正規化、1 control step分のみ印加」という確率的な単step impulseで
++            # あり、固定のduration_steps・離散方向数という概念は実装に存在しない。
++            # ここではその実際の挙動をそのまま記録する。
++            "mechanism": (
++                "各control stepで独立に3%の確率でpush発火。方向はx:[-0.5,0.5], "
++                "y:[-1.0,1.0], z:[-0.2,0.2]から一様サンプルして正規化した3軸連続方向"
++                "(離散方位ではない)。1回のpushはCONTROL_DT(1 control step)のみ"
++                "qfrc_appliedへ印加される(envs/mjx_env.py 参照)。"
++            ),
++            "push_trigger_probability_per_step": 0.03,
++            "control_dt_s": float(RobotConfig.CONTROL_DT),
++            "impulse_per_trigger_Ns": [
++                float(force * RobotConfig.CONTROL_DT) for force in force_levels
+             ],
+-            "implementation": "MJX random horizontal push; direction is sampled continuously",
+         },
+     }
+ 
+diff --git a/tests/test_phase0_eval_diagnostics.py b/tests/test_phase0_eval_diagnostics.py
+index 8836cbe..91d7379 100644
+--- a/tests/test_phase0_eval_diagnostics.py
++++ b/tests/test_phase0_eval_diagnostics.py
+@@ -19,6 +19,8 @@ from scratch.phase0_eval_diagnostics import (
+     kaplan_meier_survival,
+     diagnose_failure_timing,
+     summarize_episode_alive,
++    track_sustained_contact_loss,
++    interpolate_threshold_crossing,
+ )
+ 
+ 
+@@ -84,4 +86,53 @@ def test_summarize_episode_alive_basic():
+     """基本的なエピソード生存サマリー。"""
+     result = summarize_episode_alive([100, 200, 300])
+     assert result["n"] == 3
+-    assert result["mean"] == 200.0
+\ No newline at end of file
++    assert result["mean"] == 200.0
++
++def test_track_sustained_contact_loss_momentary_blip_not_a_failure():
++    """grace_steps未満の瞬間的な非接触は本物の接地喪失として扱わない
++    (2026-09-26修正: 全step ANDラッチだった旧バグの回帰テスト)。"""
++    consecutive, real_loss = 0, False
++    grace_steps = 2
++    # 1step分だけ非接触 → まだreal_lossにはならない
++    consecutive, real_loss = track_sustained_contact_loss(False, consecutive, real_loss, grace_steps)
++    assert real_loss is False
++    # 接触が戻ればconsecutiveは0にリセットされる
++    consecutive, real_loss = track_sustained_contact_loss(True, consecutive, real_loss, grace_steps)
++    assert consecutive == 0
++    assert real_loss is False
++
++
++def test_track_sustained_contact_loss_sustained_is_a_failure():
++    """grace_steps以上連続した非接触は本物の接地喪失として確定する。"""
++    consecutive, real_loss = 0, False
++    grace_steps = 2
++    for _ in range(grace_steps):
++        consecutive, real_loss = track_sustained_contact_loss(False, consecutive, real_loss, grace_steps)
++    assert real_loss is True
++    # 一度real_loss=Trueになったら、その後接触が戻ってもTrueのまま
++    consecutive, real_loss = track_sustained_contact_loss(True, consecutive, real_loss, grace_steps)
++    assert real_loss is True
++
++
++def test_track_sustained_contact_loss_grace_steps_one_matches_old_behavior():
++    """grace_steps=1なら旧実装(全step AND)と同じ、1stepの非接触で即失敗になる。"""
++    consecutive, real_loss = 0, False
++    consecutive, real_loss = track_sustained_contact_loss(False, consecutive, real_loss, grace_steps=1)
++    assert real_loss is True
++
++
++def test_interpolate_threshold_crossing_basic():
++    """成功率が単調に下がる典型例で、線形補間によるJ_50計算が妥当な範囲に入る。"""
++    forces = [0.0, 10.0, 20.0, 30.0]
++    success = [1.0, 0.9, 0.4, 0.1]
++    j50 = interpolate_threshold_crossing(forces, success, target=0.5)
++    assert j50 is not None
++    # 0.9→0.4の区間(10〜20N)でtarget=0.5を跨ぐので、その範囲内であるべき
++    assert 10.0 <= j50 <= 20.0
++
++
++def test_interpolate_threshold_crossing_no_crossing_returns_none():
++    """全区間でtargetを跨がない場合は外挿せずNoneを返す。"""
++    forces = [0.0, 10.0, 20.0]
++    success = [1.0, 0.95, 0.9]  # 常に0.5を上回る
++    assert interpolate_threshold_crossing(forces, success, target=0.5) is None

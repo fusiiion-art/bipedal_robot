@@ -1,0 +1,293 @@
+{
+  "generated_at": "2026-09-26T12:48:18.509533+00:00",
+  "checkpoint": "/mnt/c/bipedal_robot/log/version_0/best_params.pkl",
+  "max_steps": 500,
+  "note_initial_state_randomization": "物理初期姿勢(qpos/qvel)は常にnominal poseに固定されている(未実装機能、master_plan.md付録A §1.6参照)。ここでの'randomized_dr'は質量/摩擦/重心オフセット/サーボ温度/電圧のdomain randomizationのon/offを指す近似軸。",
+  "note_termination_reasons": "現行実装(envs/mjx_rewards.py)はfallen_roll/fallen_pitch/fallen_height/time_limitのみをterminationとして判定する。non_illegal_contact/slip_ok/torque_okによるterminationは未実装(master_plan.md Task4 C-08未着手)。",
+  "conditions": {
+    "deterministic__fixed_dr": {
+      "n_episodes": 3,
+      "episode_alive": {
+        "mean": 500.0,
+        "std": 0.0,
+        "min": 500.0,
+        "max": 500.0,
+        "n": 3
+      },
+      "termination_reason_counts": {
+        "time_limit": 3
+      },
+      "termination_reason_rate": {
+        "time_limit": 1.0
+      },
+      "kaplan_meier": {
+        "times": [
+          0
+        ],
+        "survival": [
+          1.0
+        ]
+      },
+      "failure_timing_diagnosis": {
+        "classification": "no_failures",
+        "suggested_action": "terminatedによる失敗episodeが観測されなかった。time-limit到達のみであれば§3.3(truncation/termination処理)の疑いは後退し、他の症状(KLスパイク等)の切り分けを優先する。",
+        "normalized_mean": null,
+        "early_rate": null,
+        "late_rate": null
+      },
+      "success_rate": 0.0,
+      "both_feet_contact_rate": 1.0,
+      "max_foot_displacement_m": 0.017290055751800537,
+      "max_roll_deg": 3.8295718081839056,
+      "max_pitch_deg": 1.6963155800216307,
+      "recovery_time_steps": [],
+      "recovery_time_mean_steps": null,
+      "torque_saturation_rate_mean": 1.0,
+      "reward_component_means": {
+        "action_saturation": 0.04771089367816846,
+        "alive": 1.0,
+        "barrier_height": 0.0,
+        "barrier_torque": 1.0054872328042983,
+        "both_feet_contact": 0.9979999999999999,
+        "cbf_correction_norm": 0.6415933923125268,
+        "com_accel_is_fallback": 0.0,
+        "curriculum_scale": 1.0,
+        "disturbance_recovery_bonus": 0.0,
+        "fall_penalty": 0.0,
+        "foot_balance": 0.851551659822464,
+        "lambda_phase": 0.9416867122196902,
+        "pbrs_reward": -0.1583405900685272,
+        "physics_diverged": 0.0,
+        "potential": 15.757718466440837,
+        "r_com_stab": 0.9948514908949534,
+        "r_cp": 0.9682012101809184,
+        "r_recovery": 0.006167731825606399,
+        "r_upright": 0.9947181285222372,
+        "reward": 63.32291925048829,
+        "reward_is_finite": 1.0,
+        "reward_per_step": 63.32291925048829,
+        "stability_index": 0.6593294947346052,
+        "stability_metrics_finite": 1.0,
+        "total_penalty": 4.298872547666232,
+        "total_reward": 63.32291925048829,
+        "zmp_margin": 0.8104447095692158
+      },
+      "collapse_examples": []
+    },
+    "deterministic__randomized_dr": {
+      "n_episodes": 200,
+      "episode_alive": {
+        "mean": 500.0,
+        "std": 0.0,
+        "min": 500.0,
+        "max": 500.0,
+        "n": 200
+      },
+      "termination_reason_counts": {
+        "time_limit": 200
+      },
+      "termination_reason_rate": {
+        "time_limit": 1.0
+      },
+      "kaplan_meier": {
+        "times": [
+          0
+        ],
+        "survival": [
+          1.0
+        ]
+      },
+      "failure_timing_diagnosis": {
+        "classification": "no_failures",
+        "suggested_action": "terminatedによる失敗episodeが観測されなかった。time-limit到達のみであれば§3.3(truncation/termination処理)の疑いは後退し、他の症状(KLスパイク等)の切り分けを優先する。",
+        "normalized_mean": null,
+        "early_rate": null,
+        "late_rate": null
+      },
+      "success_rate": 0.0,
+      "both_feet_contact_rate": 0.515,
+      "max_foot_displacement_m": 0.021343763917684555,
+      "max_roll_deg": 5.904952962022606,
+      "max_pitch_deg": 2.557780979774011,
+      "recovery_time_steps": [],
+      "recovery_time_mean_steps": null,
+      "torque_saturation_rate_mean": 1.0,
+      "reward_component_means": {
+        "action_saturation": 0.047022396795637904,
+        "alive": 1.0,
+        "barrier_height": 0.0,
+        "barrier_torque": 0.9786436928901472,
+        "both_feet_contact": 0.9967199999999999,
+        "cbf_correction_norm": 0.6590470238405467,
+        "com_accel_is_fallback": 0.0,
+        "curriculum_scale": 1.0,
+        "disturbance_recovery_bonus": 0.0,
+        "fall_penalty": 0.0,
+        "foot_balance": 0.8508638487678766,
+        "lambda_phase": 0.9415521649115834,
+        "pbrs_reward": -0.15769017101526886,
+        "physics_diverged": 0.0,
+        "potential": 15.750271002435683,
+        "r_com_stab": 0.9948349065810441,
+        "r_cp": 0.9677905907511711,
+        "r_recovery": 0.0064833344127041455,
+        "r_upright": 0.9936789727056027,
+        "reward": 63.10496939926147,
+        "reward_is_finite": 1.0,
+        "reward_per_step": 63.10496939926147,
+        "stability_index": 0.6570406817597896,
+        "stability_metrics_finite": 1.0,
+        "total_penalty": 4.315533136832118,
+        "total_reward": 63.10496939926147,
+        "zmp_margin": 0.8054591435180081
+      },
+      "collapse_examples": []
+    },
+    "stochastic__fixed_dr": {
+      "n_episodes": 200,
+      "episode_alive": {
+        "mean": 500.0,
+        "std": 0.0,
+        "min": 500.0,
+        "max": 500.0,
+        "n": 200
+      },
+      "termination_reason_counts": {
+        "time_limit": 200
+      },
+      "termination_reason_rate": {
+        "time_limit": 1.0
+      },
+      "kaplan_meier": {
+        "times": [
+          0
+        ],
+        "survival": [
+          1.0
+        ]
+      },
+      "failure_timing_diagnosis": {
+        "classification": "no_failures",
+        "suggested_action": "terminatedによる失敗episodeが観測されなかった。time-limit到達のみであれば§3.3(truncation/termination処理)の疑いは後退し、他の症状(KLスパイク等)の切り分けを優先する。",
+        "normalized_mean": null,
+        "early_rate": null,
+        "late_rate": null
+      },
+      "success_rate": 0.0,
+      "both_feet_contact_rate": 0.705,
+      "max_foot_displacement_m": 0.024611497297883034,
+      "max_roll_deg": 6.095697093652613,
+      "max_pitch_deg": 3.1665205223343396,
+      "recovery_time_steps": [],
+      "recovery_time_mean_steps": null,
+      "torque_saturation_rate_mean": 1.0,
+      "reward_component_means": {
+        "action_saturation": 0.06539723523299208,
+        "alive": 1.0,
+        "barrier_height": 0.0,
+        "barrier_torque": 1.0139428546476998,
+        "both_feet_contact": 0.99676,
+        "cbf_correction_norm": 0.8519925489225983,
+        "com_accel_is_fallback": 0.0,
+        "curriculum_scale": 1.0,
+        "disturbance_recovery_bonus": 0.0,
+        "fall_penalty": 0.0,
+        "foot_balance": 0.856118198760748,
+        "lambda_phase": 0.8939465659057808,
+        "pbrs_reward": -0.1562215487374116,
+        "physics_diverged": 0.0,
+        "potential": 15.562692554044725,
+        "r_com_stab": 0.9929362294030188,
+        "r_cp": 0.9672643833333254,
+        "r_recovery": 0.00810940839730512,
+        "r_upright": 0.9941649944108724,
+        "reward": 61.85898009792328,
+        "reward_is_finite": 1.0,
+        "reward_per_step": 61.85898009792328,
+        "stability_index": 0.6381359829643369,
+        "stability_metrics_finite": 1.0,
+        "total_penalty": 4.744756074427962,
+        "total_reward": 61.85898009792328,
+        "zmp_margin": 0.7829565380818688
+      },
+      "collapse_examples": []
+    },
+    "stochastic__randomized_dr": {
+      "n_episodes": 200,
+      "episode_alive": {
+        "mean": 500.0,
+        "std": 0.0,
+        "min": 500.0,
+        "max": 500.0,
+        "n": 200
+      },
+      "termination_reason_counts": {
+        "time_limit": 200
+      },
+      "termination_reason_rate": {
+        "time_limit": 1.0
+      },
+      "kaplan_meier": {
+        "times": [
+          0
+        ],
+        "survival": [
+          1.0
+        ]
+      },
+      "failure_timing_diagnosis": {
+        "classification": "no_failures",
+        "suggested_action": "terminatedによる失敗episodeが観測されなかった。time-limit到達のみであれば§3.3(truncation/termination処理)の疑いは後退し、他の症状(KLスパイク等)の切り分けを優先する。",
+        "normalized_mean": null,
+        "early_rate": null,
+        "late_rate": null
+      },
+      "success_rate": 0.0,
+      "both_feet_contact_rate": 0.43,
+      "max_foot_displacement_m": 0.02739754505455494,
+      "max_roll_deg": 6.759569709749874,
+      "max_pitch_deg": 3.7082484386174386,
+      "recovery_time_steps": [],
+      "recovery_time_mean_steps": null,
+      "torque_saturation_rate_mean": 1.0,
+      "reward_component_means": {
+        "action_saturation": 0.06487604052587413,
+        "alive": 1.0,
+        "barrier_height": 0.0,
+        "barrier_torque": 0.9891299037034682,
+        "both_feet_contact": 0.9948,
+        "cbf_correction_norm": 0.8570079482409357,
+        "com_accel_is_fallback": 0.0,
+        "curriculum_scale": 1.0,
+        "disturbance_recovery_bonus": 0.0,
+        "fall_penalty": 0.0,
+        "foot_balance": 0.8531252140980959,
+        "lambda_phase": 0.890319911522835,
+        "pbrs_reward": -0.15614137804183692,
+        "physics_diverged": 0.0,
+        "potential": 15.539604159965515,
+        "r_com_stab": 0.9926641429984571,
+        "r_cp": 0.9675711631458997,
+        "r_recovery": 0.008279985267388356,
+        "r_upright": 0.992999099357724,
+        "reward": 61.69057677059173,
+        "reward_is_finite": 1.0,
+        "reward_per_step": 61.69057677059173,
+        "stability_index": 0.6384536286847293,
+        "stability_metrics_finite": 1.0,
+        "total_penalty": 4.755200415165126,
+        "total_reward": 61.69057677059173,
+        "zmp_margin": 0.7838046693258965
+      },
+      "collapse_examples": []
+    }
+  },
+  "disturbance_model": {
+    "force_levels_N": [],
+    "directions": 0,
+    "duration_steps": 0,
+    "duration_s": 0.0,
+    "impulse_levels_Ns": [],
+    "implementation": "MJX random horizontal push; direction is sampled continuously"
+  }
+}

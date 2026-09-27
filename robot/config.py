@@ -96,6 +96,13 @@ class RobotConfig:
     RANDOM_COM_OFFSET = [-0.02, 0.02]  # Phase 1: 重心偏差を最小化
     RANDOM_PUSH_MAX_FORCE = 0.0  # Phase 0: Gate 0 / Gate A を先に確定し、外乱導入は後に行う
     DISTURBANCE_CURRICULUM = False  # Phase 0 では外乱を無効化して静止直立を安定化させる
+    # [2026-09-26追加] Gate B robustness envelope評価(scratch/gate_b_eval.py)が
+    # 既定で掃引する外力[N]のリスト。master_plan.md §0.1の目標外乱スペック
+    # (突っつきインパルス目標値・Phase-1物理限界値)が未記入のため、根拠のない
+    # 数値をここで勝手に補わず既定は空リストにしている。実行時は必ず
+    # `--force-levels`で明示的に指定すること(§9.2: 外乱上限を解析限界以上へ
+    # 自動拡大してはならない、の原則に従う)。
+    PUSH_FORCE_LEVELS = []
     
     # 熱・電圧のシミュレーションパラメータ
     RANDOM_TEMP = [20.0, 80.0]  # ℃
