@@ -302,6 +302,7 @@ class EpisodeResult:
     success: bool = False
     both_feet_contact: bool = False
     max_foot_displacement: float = 0.0
+    max_foot_displacement_since_settling: float = 0.0
     max_roll_rad: float = 0.0
     max_pitch_rad: float = 0.0
     recovery_time_steps: Optional[int] = None
@@ -409,6 +410,7 @@ def run_episode(
     rng,
     max_steps: int,
     collapse_window: int,
+    settling_steps: int = 50,
 ) -> EpisodeResult:
     """1エピソードをロールアウトする。
 
@@ -433,6 +435,16 @@ def run_episode(
     metric_count = 0
     initial_foot_positions = None
     max_foot_displacement = 0.0
+    # [2026-09-26追加] max_foot_displacement(既存、successの正式判定に使用)は
+    # reset直後(step 1)を基準点にした累積最大値。reset姿勢が自然な静止姿勢と
+    # 一致しない場合、最初の沈み込み・姿勢確立(settling)による1回限りの移動が
+    # 「滑り」として累算され、以降ずっと定常状態でも良好であるかのような
+    # ケースと見分けがつかない。settling_steps経過後を基準点にした
+    # 補助指標を別途記録し、判定(success)には使わず診断専用とする
+    # (§0.3: 閾値そのものの変更はrobot/config.py側で行うべきで、
+    # このスクリプト側で勝手に緩めない)。
+    settled_foot_positions = None
+    max_foot_displacement_since_settling = 0.0
     max_roll = 0.0
     max_pitch = 0.0
     both_feet_contact = True
@@ -469,6 +481,13 @@ def run_episode(
                 max_foot_displacement,
                 float(np.max(np.linalg.norm(foot_positions[:, :2] - initial_foot_positions[:, :2], axis=1))),
             )
+            if step_index >= settling_steps:
+                if settled_foot_positions is None:
+                    settled_foot_positions = foot_positions.copy()
+                max_foot_displacement_since_settling = max(
+                    max_foot_displacement_since_settling,
+                    float(np.max(np.linalg.norm(foot_positions[:, :2] - settled_foot_positions[:, :2], axis=1))),
+                )
         max_roll = max(max_roll, abs(float(rpy[0])))
         max_pitch = max(max_pitch, abs(float(rpy[1])))
         contact_metric = float(np.asarray(getattr(state, "metrics", {}).get("both_feet_contact", 0.0)))
@@ -561,6 +580,7 @@ def run_episode(
         success=success,
         both_feet_contact=has_required_contact,
         max_foot_displacement=max_foot_displacement,
+        max_foot_displacement_since_settling=max_foot_displacement_since_settling,
         max_roll_rad=max_roll,
         max_pitch_rad=max_pitch,
         recovery_time_steps=recovery_time_steps,
@@ -578,12 +598,14 @@ def run_condition(
     base_seed: int,
     max_steps: int,
     collapse_window: int,
+    settling_steps: int = 50,
 ) -> dict:
     lengths, terminated_flags, truncated_flags, reasons = [], [], [], []
     reward_component_accum: Dict[str, List[float]] = {}
     collapse_examples = []
     successes = 0
     foot_displacements = []
+    foot_displacements_since_settling = []
     recovery_times = []
     torque_saturation_rates = []
     max_rolls = []
@@ -593,7 +615,7 @@ def run_condition(
     rng = ctx["jax"].random.PRNGKey(base_seed)
     for ep in range(n_episodes):
         rng, rng_ep = ctx["jax"].random.split(rng)
-        result = run_episode(ctx, reset_fn, step_fn, policy_fn, rng_ep, max_steps, collapse_window)
+        result = run_episode(ctx, reset_fn, step_fn, policy_fn, rng_ep, max_steps, collapse_window, settling_steps)
         lengths.append(result.length)
         terminated_flags.append(result.terminated)
         truncated_flags.append(result.truncated)
@@ -601,6 +623,7 @@ def run_condition(
         successes += int(result.success)
         contact_successes += int(result.both_feet_contact)
         foot_displacements.append(result.max_foot_displacement)
+        foot_displacements_since_settling.append(result.max_foot_displacement_since_settling)
         max_rolls.append(result.max_roll_rad)
         max_pitches.append(result.max_pitch_rad)
         torque_saturation_rates.append(result.torque_saturation_rate)
@@ -634,6 +657,13 @@ def run_condition(
         "success_rate": successes / n_episodes if n_episodes else 0.0,
         "both_feet_contact_rate": contact_successes / n_episodes if n_episodes else 0.0,
         "max_foot_displacement_m": float(max(foot_displacements, default=0.0)),
+        "max_foot_displacement_since_settling_m": float(max(foot_displacements_since_settling, default=0.0)),
+        "note_foot_displacement_since_settling": (
+            f"settling_steps={settling_steps}制御step経過後を基準点にした補助指標。"
+            "successの正式判定には使わない(診断専用、§0.3準拠でrobot/config.pyの"
+            "MAX_FOOT_TRANSLATIONは変更していない)。max_foot_displacement_mとの差が"
+            "大きい場合、reset直後の沈み込み/姿勢確立が主因である可能性が高い。"
+        ),
         "max_roll_deg": float(np.rad2deg(max(max_rolls, default=0.0))),
         "max_pitch_deg": float(np.rad2deg(max(max_pitches, default=0.0))),
         "recovery_time_steps": recovery_times,
@@ -658,6 +688,11 @@ def main():
     )
     parser.add_argument("--max-steps", type=int, default=None, help="未指定ならRobotConfig.MAX_EPISODE_STEPS")
     parser.add_argument("--collapse-window", type=int, default=20)
+    parser.add_argument(
+        "--settling-steps", type=int, default=50,
+        help="max_foot_displacement_since_settling_m診断指標の基準点をreset後何control step目"
+             "にするか(既定50step=CONTROL_DT基準で約0.5秒)。judgeには使わない。",
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
         "--force-levels", default=None,
@@ -806,6 +841,7 @@ def main():
                 base_seed=args.seed,
                 max_steps=max_steps,
                 collapse_window=args.collapse_window,
+                settling_steps=args.settling_steps,
             )
         key = f"{label}__{dr_label}"
         report["conditions"][key] = result
