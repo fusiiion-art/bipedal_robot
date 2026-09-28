@@ -1,7 +1,7 @@
 # Gate A 診断ドラフト（自動生成 — 人間 / Copilotによるレビュー必須）
 
-生成日時: 2026-09-27T11:19:25.747430+00:00
-checkpoint: /mnt/c/bipedal_robot/log/version_0/best_params.pkl
+生成日時: 2026-09-28T13:13:20.491116+00:00
+checkpoint: /mnt/c/bipedal_robot/log/gate_a_v2/version_0/best_params.pkl
 
 この文書は scratch/phase0_eval_diagnostics.py により自動生成された一次判定です。
 master_plan.md §3.7 (Task0完了基準) の「§3.6の決定木に基づく主因の暫定結論」

@@ -145,7 +145,7 @@ class RobotConfig:
     TARGET_YAW_RATE = 0.0
     MAX_FOOT_TRANSLATION = 0.005  # [m], 5 mm 未満を許容
     MAX_SINGLE_FOOT_LIFT = 0.0
-    FOOT_CONTACT_THRESHOLD = 0.05  # [N] シミュレーション上の各足の最小接触力
+    FOOT_CONTACT_THRESHOLD = 0.5  # [N] シミュレーション上の各足FSR4センサー平均の最小接触力 (足全体で2.0N以上)
     
     # ======================================================
     # 次世代・外乱耐性特化 報酬ウェイト (Phase-Dependent Architecture)
@@ -163,6 +163,8 @@ class RobotConfig:
         # com_stab: r_still(常時) および r_com_stab(安定時ボーナス)の重み (安定時は実質20.0相当)
         "com_stab": 10.0,
         "both_feet_contact": 8.0,
+        # foot_balance: 左右荷重バランス (1.0=完全均等50:50, 片足脱力ローカルミニマム排除)
+        "foot_balance": 6.0,
 
         # 外乱が無い Phase 0/1 では回復ボーナスは控えめにする
         "capture_point": 0.5,
@@ -178,7 +180,8 @@ class RobotConfig:
         "energy": 0.00005,
         "smoothness": 0.0001,
         "drift": 0.005,
-        "slip": 0.01,
+        # slip: 足裏並進速度 (data.cvel) に対する滑りペナルティ重み
+        "slip": 2.0,
         "stance_width": 0.01,
 
         # 緩和対数バリアも安全域では大きく効かせない

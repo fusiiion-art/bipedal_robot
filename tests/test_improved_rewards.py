@@ -217,6 +217,105 @@ def test_stance_penalty_discourages_wide_foot_spacing():
     assert float(wide_reward) < float(narrow_reward), "Wide stance should be penalized"
     print("✓ Wide-stance penalty validated\n")
 
+
+def test_foot_balance_and_slip_penalty():
+    """左右荷重バランス(foot_balance)と足裏水平速度(cvel)ペナルティの検証。"""
+    from envs.mjx_rewards import MJXRewardSystem
+
+    class DummyModel:
+        nq = 7
+        nu = 6
+        nsensordata = 8
+        actuator_trnid = [[i, 0] for i in range(6)]
+        jnt_qposadr = list(range(7, 13))
+        jnt_dofadr = list(range(6, 12))
+
+    reward_system = MJXRewardSystem(
+        DummyModel(),
+        RobotConfig.REWARD_WEIGHTS,
+        left_foot_id=0,
+        right_foot_id=1,
+    )
+
+    class DummyData:
+        def __init__(self, left_force, right_force, left_cvel_xy=0.0, right_cvel_xy=0.0):
+            self.qpos = jp.array([0.0, 0.0, 0.28, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+            self.qvel = jp.zeros(6)
+            self.actuator_force = jp.zeros(6)
+            self.qacc = jp.array([0.0, 0.0, 0.0])
+            # FSR: [0:4] left, [4:8] right
+            self.sensordata = jp.concatenate([jp.full(4, left_force), jp.full(4, right_force)])
+            self.xpos = jp.array([[-0.05, 0.0, 0.0], [0.05, 0.0, 0.0]])
+            self.subtree_com = jp.array([[0.0, 0.0, 0.28]])
+            # cvel: 2 bodies, [wx, wy, wz, vx, vy, vz]
+            cvel_arr = jp.zeros((2, 6))
+            cvel_arr = cvel_arr.at[0, 3].set(left_cvel_xy)
+            cvel_arr = cvel_arr.at[1, 3].set(right_cvel_xy)
+            self.cvel = cvel_arr
+
+    # 1. 左右均等(1.5Nずつ) vs 片足偏向(2.9N vs 0.1N)
+    balanced_data = DummyData(1.5, 1.5)
+    unbalanced_data = DummyData(2.9, 0.1)
+
+    r_bal, _, m_bal, _ = reward_system.compute(
+        balanced_data, action=jp.zeros(6), last_action=jp.zeros(6),
+        double_last_action=jp.zeros(6), triple_last_action=jp.zeros(6),
+        cbf_penalty=jp.array(0.0), last_potential=jp.array(0.0),
+        step=jp.array(10), reference_action=jp.zeros(6),
+        servo_temp=jp.full(6, 40.0), supply_volt=11.1,
+        global_step=jp.array(1000), gait_phase=0.5,
+        was_disturbed=jp.array(False), disturbance_recovery_steps=jp.array(1000),
+        training_progress=jp.array(0.5),
+    )
+
+    r_unbal, _, m_unbal, _ = reward_system.compute(
+        unbalanced_data, action=jp.zeros(6), last_action=jp.zeros(6),
+        double_last_action=jp.zeros(6), triple_last_action=jp.zeros(6),
+        cbf_penalty=jp.array(0.0), last_potential=jp.array(0.0),
+        step=jp.array(10), reference_action=jp.zeros(6),
+        servo_temp=jp.full(6, 40.0), supply_volt=11.1,
+        global_step=jp.array(1000), gait_phase=0.5,
+        was_disturbed=jp.array(False), disturbance_recovery_steps=jp.array(1000),
+        training_progress=jp.array(0.5),
+    )
+
+    print(f"Balanced reward:   {float(r_bal):.4f} (foot_balance={float(m_bal['foot_balance']):.4f})")
+    print(f"Unbalanced reward: {float(r_unbal):.4f} (foot_balance={float(m_unbal['foot_balance']):.4f})")
+    assert float(m_bal['foot_balance']) > float(m_unbal['foot_balance']), "Balanced foot should have higher balance metric"
+    assert float(r_bal) > float(r_unbal), "Balanced state should yield higher total reward"
+
+    # 2. 足滑り(静止 vs 50mm/s 滑り)
+    still_data = DummyData(1.5, 1.5, left_cvel_xy=0.0, right_cvel_xy=0.0)
+    slipping_data = DummyData(1.5, 1.5, left_cvel_xy=0.05, right_cvel_xy=0.05)
+
+    r_still, _, _, _ = reward_system.compute(
+        still_data, action=jp.zeros(6), last_action=jp.zeros(6),
+        double_last_action=jp.zeros(6), triple_last_action=jp.zeros(6),
+        cbf_penalty=jp.array(0.0), last_potential=jp.array(0.0),
+        step=jp.array(10), reference_action=jp.zeros(6),
+        servo_temp=jp.full(6, 40.0), supply_volt=11.1,
+        global_step=jp.array(1000), gait_phase=0.5,
+        was_disturbed=jp.array(False), disturbance_recovery_steps=jp.array(1000),
+        training_progress=jp.array(0.5),
+    )
+
+    r_slip, _, _, _ = reward_system.compute(
+        slipping_data, action=jp.zeros(6), last_action=jp.zeros(6),
+        double_last_action=jp.zeros(6), triple_last_action=jp.zeros(6),
+        cbf_penalty=jp.array(0.0), last_potential=jp.array(0.0),
+        step=jp.array(10), reference_action=jp.zeros(6),
+        servo_temp=jp.full(6, 40.0), supply_volt=11.1,
+        global_step=jp.array(1000), gait_phase=0.5,
+        was_disturbed=jp.array(False), disturbance_recovery_steps=jp.array(1000),
+        training_progress=jp.array(0.5),
+    )
+
+    print(f"Still reward:    {float(r_still):.4f}")
+    print(f"Slipping reward: {float(r_slip):.4f}")
+    assert float(r_still) > float(r_slip), "Foot slip must reduce total reward"
+    print("✓ Foot balance and slip penalty validated\n")
+
+
 if __name__ == '__main__':
     print("\n" + "=" * 60)
     print("REWARD SYSTEM IMPROVEMENT VALIDATION")
@@ -227,6 +326,7 @@ if __name__ == '__main__':
         test_stability_metrics()
         test_adaptive_scaling()
         test_stance_penalty_discourages_wide_foot_spacing()
+        test_foot_balance_and_slip_penalty()
         
         print("=" * 60)
         print("✓ ALL TESTS PASSED")

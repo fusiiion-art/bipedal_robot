@@ -378,7 +378,19 @@ class MJXRewardSystem:
         drift_multiplier = lambda_phase * (1.0 - stability_index * 0.3)
         p_drift = jp.clip(jp.sum(jp.square(base_pos[0:2])), 0.0, 100.0) * drift_multiplier
 
-        p_slip = jp.clip((jp.linalg.norm(base_lin_vel) * jp.mean(jp.abs(joint_vel))) ** 2, 0.0, 100.0)
+        # [2026-09-27 改善] 真の足裏水平滑りペナルティ (data.cvelベース)
+        # 従来は (base_lin_vel * joint_vel)^2 という胴体依存の式で、胴体静止時の足裏ドリフトを検出できなかった。
+        # MuJoCoの data.cvel (各bodyの空間速度, 3:6が並進速度[vx, vy, vz]) から左右足裏bodyの
+        # ワールド水平速度を取り出し、その速度ノルムを直接ペナルティ化する。
+        cvel = getattr(data, 'cvel', None)
+        if cvel is not None and hasattr(cvel, 'shape') and cvel.shape[0] > max(self._left_foot_id, self._right_foot_id):
+            left_foot_vel_xy = cvel[self._left_foot_id, 3:5]
+            right_foot_vel_xy = cvel[self._right_foot_id, 3:5]
+            left_foot_speed = jp.linalg.norm(left_foot_vel_xy)
+            right_foot_speed = jp.linalg.norm(right_foot_vel_xy)
+            p_slip = jp.clip(left_foot_speed + right_foot_speed, 0.0, 10.0)
+        else:
+            p_slip = jp.array(0.0)
 
         foot_span = jp.linalg.norm(right_foot_pos[0:2] - left_foot_pos[0:2])
         stance_width_penalty = jp.clip(jp.maximum(0.0, foot_span - 0.16) * 20.0, 0.0, 20.0)
@@ -439,6 +451,8 @@ class MJXRewardSystem:
             p_barrier_torque * w.get('barrier_torque', 1.0)
         ) * safety_scale
 
+        r_foot_balance = stability_metrics['foot_balance']
+
         total_reward = (
             r_alive * w['alive'] +
             r_pbrs +
@@ -447,6 +461,8 @@ class MJXRewardSystem:
             r_still * w['com_stab'] +
             r_target_pose * w['target_pose'] +
             r_both_feet_contact * w.get('both_feet_contact', 0.0) +
+            # [2026-09-27 追加] 左右均等荷重ボーナス (片足脱力・片足逃げのローカルミニマム排除)
+            r_foot_balance * w.get('foot_balance', 0.0) +
 
             lambda_phase * (
                 # [調査まとめ 項目5] 安定時 (lambda_phase≈1) には r_com_stab による追加ボーナスとして
