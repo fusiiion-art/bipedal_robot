@@ -19,7 +19,7 @@ venv_wsl/
 
 # --- JAX compilation cache ---
 .jax_cache/
-
+.pytest_cache
 # --- IDE / Editor ---
 .vscode/
 .idea/
