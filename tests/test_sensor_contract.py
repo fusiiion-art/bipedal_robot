@@ -59,7 +59,10 @@ def test_domain_randomization_is_applied_to_physics_model():
 
     assert np.allclose(np.asarray(randomized.body_mass), np.asarray(base_model.body_mass) * mass_scale)
     assert np.allclose(np.asarray(randomized.geom_friction), np.asarray(base_model.geom_friction) * fric_scale)
-    assert np.allclose(np.asarray(randomized.body_ipos[0]), np.asarray(base_model.body_ipos[0]) + com_offset)
+    root = env._root_body_id
+    assert root != 0, "COM offset must target the floating base body, not the static world body."
+    assert np.allclose(np.asarray(randomized.body_ipos[root]), np.asarray(base_model.body_ipos[root]) + com_offset)
+    assert np.allclose(np.asarray(randomized.body_ipos[0]), np.asarray(base_model.body_ipos[0]))
 
 
 def test_domain_randomization_torque_uses_actuator_qvel_mapping():

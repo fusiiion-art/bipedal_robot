@@ -200,32 +200,32 @@
     <!-- ============================================================ -->
     <actuator>
         <!-- 1. RIGHT LEG (右脚 6関節) -->
-        <position name="right_hip_yaw"      joint="right_hip_yaw"      kp="20" kv="0.5" ctrlrange="0.0 3.141593" />
-        <position name="right_hip_roll"     joint="right_hip_roll"     kp="20" kv="0.5" ctrlrange="-0.523599 0.523599" />
-        <position name="right_hip_pitch"    joint="right_hip_pitch"    kp="20" kv="0.5" ctrlrange="-0.523599 1.047198" />
-        <position name="right_knee"         joint="right_knee"         kp="20" kv="0.5" ctrlrange="-1.047198 0.523599" />
-        <position name="right_ankle_pitch"  joint="right_ankle_pitch"  kp="20" kv="0.5" ctrlrange="-1.570796 0.436332" />
-        <position name="right_ankle_roll"   joint="right_ankle_roll"   kp="20" kv="0.5" ctrlrange="-0.436332 0.436332" />
+        <position name="right_hip_yaw"      joint="right_hip_yaw"      kp="20" kv="0.5" ctrlrange="0.0 3.141593" forcerange="-2.94 2.94" />
+        <position name="right_hip_roll"     joint="right_hip_roll"     kp="20" kv="0.5" ctrlrange="-0.523599 0.523599" forcerange="-2.94 2.94" />
+        <position name="right_hip_pitch"    joint="right_hip_pitch"    kp="20" kv="0.5" ctrlrange="-0.523599 1.047198" forcerange="-2.94 2.94" />
+        <position name="right_knee"         joint="right_knee"         kp="20" kv="0.5" ctrlrange="-1.047198 0.523599" forcerange="-2.94 2.94" />
+        <position name="right_ankle_pitch"  joint="right_ankle_pitch"  kp="20" kv="0.5" ctrlrange="-1.570796 0.436332" forcerange="-2.94 2.94" />
+        <position name="right_ankle_roll"   joint="right_ankle_roll"   kp="20" kv="0.5" ctrlrange="-0.436332 0.436332" forcerange="-2.94 2.94" />
         
         <!-- 2. LEFT LEG (左脚 6関節) -->
-        <position name="left_hip_yaw"       joint="left_hip_yaw"       kp="20" kv="0.5" ctrlrange="-3.141593 0.0" />
-        <position name="left_hip_roll"      joint="left_hip_roll"      kp="20" kv="0.5" ctrlrange="-0.523599 0.523599" />
-        <position name="left_hip_pitch"     joint="left_hip_pitch"     kp="20" kv="0.5" ctrlrange="-1.047198 0.523599" />
-        <position name="left_knee"          joint="left_knee"          kp="20" kv="0.5" ctrlrange="-0.523599 1.047198" />
-        <position name="left_ankle_pitch"   joint="left_ankle_pitch"   kp="20" kv="0.5" ctrlrange="-0.436332 1.570796" />
-        <position name="left_ankle_roll"    joint="left_ankle_roll"    kp="20" kv="0.5" ctrlrange="-0.523599 0.436332" />
+        <position name="left_hip_yaw"       joint="left_hip_yaw"       kp="20" kv="0.5" ctrlrange="-3.141593 0.0" forcerange="-2.94 2.94" />
+        <position name="left_hip_roll"      joint="left_hip_roll"      kp="20" kv="0.5" ctrlrange="-0.523599 0.523599" forcerange="-2.94 2.94" />
+        <position name="left_hip_pitch"     joint="left_hip_pitch"     kp="20" kv="0.5" ctrlrange="-1.047198 0.523599" forcerange="-2.94 2.94" />
+        <position name="left_knee"          joint="left_knee"          kp="20" kv="0.5" ctrlrange="-0.523599 1.047198" forcerange="-2.94 2.94" />
+        <position name="left_ankle_pitch"   joint="left_ankle_pitch"   kp="20" kv="0.5" ctrlrange="-0.436332 1.570796" forcerange="-2.94 2.94" />
+        <position name="left_ankle_roll"    joint="left_ankle_roll"    kp="20" kv="0.5" ctrlrange="-0.523599 0.436332" forcerange="-2.94 2.94" />
 
         <!-- 3. RIGHT ARM (右腕 4関節) -->
-        <position name="right_shoulder_roll"  joint="right_shoulder_roll"  kp="20" kv="0.5" ctrlrange="-3.141593 3.141593" />
-        <position name="right_shoulder_pitch" joint="right_shoulder_pitch" kp="20" kv="0.5" ctrlrange="0.0 3.141593" />
-        <position name="right_elbow"          joint="right_elbow"          kp="20" kv="0.5" ctrlrange="0.0 3.141593" />
-        <position name="right_wrist_pitch"    joint="right_wrist_pitch"    kp="20" kv="0.5" ctrlrange="-1.570796 0.261799" />
+        <position name="right_shoulder_roll"  joint="right_shoulder_roll"  kp="20" kv="0.5" ctrlrange="-3.141593 3.141593" forcerange="-2.94 2.94" />
+        <position name="right_shoulder_pitch" joint="right_shoulder_pitch" kp="20" kv="0.5" ctrlrange="0.0 3.141593" forcerange="-2.94 2.94" />
+        <position name="right_elbow"          joint="right_elbow"          kp="20" kv="0.5" ctrlrange="0.0 3.141593" forcerange="-2.94 2.94" />
+        <position name="right_wrist_pitch"    joint="right_wrist_pitch"    kp="20" kv="0.5" ctrlrange="-1.570796 0.261799" forcerange="-2.94 2.94" />
 
         <!-- 4. LEFT ARM (左腕 4関節) -->
-        <position name="left_shoulder_roll"   joint="left_shoulder_roll"   kp="20" kv="0.5" ctrlrange="-3.141593 3.141593" />
-        <position name="left_shoulder_pitch"  joint="left_shoulder_pitch"  kp="20" kv="0.5" ctrlrange="-3.141593 0.0" />
-        <position name="left_elbow"           joint="left_elbow"           kp="20" kv="0.5" ctrlrange="-3.141593 0.0" />
-        <position name="left_wrist_pitch"     joint="left_wrist_pitch"     kp="20" kv="0.5" ctrlrange="-0.261799 1.570796" />
+        <position name="left_shoulder_roll"   joint="left_shoulder_roll"   kp="20" kv="0.5" ctrlrange="-3.141593 3.141593" forcerange="-2.94 2.94" />
+        <position name="left_shoulder_pitch"  joint="left_shoulder_pitch"  kp="20" kv="0.5" ctrlrange="-3.141593 0.0" forcerange="-2.94 2.94" />
+        <position name="left_elbow"           joint="left_elbow"           kp="20" kv="0.5" ctrlrange="-3.141593 0.0" forcerange="-2.94 2.94" />
+        <position name="left_wrist_pitch"     joint="left_wrist_pitch"     kp="20" kv="0.5" ctrlrange="-0.261799 1.570796" forcerange="-2.94 2.94" />
     </actuator>
 
     <!-- ============================================================ -->

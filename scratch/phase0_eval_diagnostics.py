@@ -511,7 +511,13 @@ def run_episode(
 
         is_fallen_roll = bool(abs(rpy[0]) > RobotConfig.TERMINATION_ROLL)
         is_fallen_pitch = bool(abs(rpy[1]) > RobotConfig.TERMINATION_PITCH)
-        is_low = bool(base_pos[2] < RobotConfig.TERMINATION_HEIGHT)
+        # [2026-09-29修正] env(envs/mjx_rewards.py)と同じく足裏基準の相対高さで判定する。
+        # 従来はワールド絶対Zと比較しており、終了理由の分類がenvと食い違い得た。
+        if foot_ids is not None and xpos.ndim == 2:
+            lowest_foot_z = float(np.min(xpos[list(foot_ids), 2]))
+        else:
+            lowest_foot_z = 0.0
+        is_low = bool(base_pos[2] - lowest_foot_z < RobotConfig.TERMINATION_HEIGHT)
 
         history.append({
             "step": step_index,
@@ -832,7 +838,10 @@ def main():
             # DR設定確定後に毎回新しいenvインスタンスを作る。
             env = SenpuuMaruMJXEnv()
             ctx["foot_ids"] = (env._reward_system._left_foot_id, env._reward_system._right_foot_id)
-            ctx["torque_limit"] = np.asarray(env._mjx_model.actuator_ctrlrange[:, 1])
+            # [2026-09-29修正] 従来は actuator_ctrlrange[:, 1] (目標関節角の上限[rad])を
+            # トルク上限[N.m]として使っており、上限0.0の関節(hip_yaw/shoulder_pitch/elbow)で
+            # |τ|>=0 が常に真となり torque_saturation_rate が必ず1.0になっていた。
+            ctx["torque_limit"] = np.full(env._mjx_model.nu, RobotConfig.MOTOR_MAX_TORQUE)
             reset_fn = ctx["jax"].jit(env.reset)
             step_fn = ctx["jax"].jit(env.step)
             result = run_condition(

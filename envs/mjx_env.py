@@ -133,7 +133,14 @@ class SenpuuMaruMJXEnv(PipelineEnv):
             actuator_to_qvel_list.append(qvel_adr)
         self._actuator_to_qpos_idx = jp.array(actuator_to_qpos_list, dtype=jp.int32)
         self._actuator_to_qvel_idx = jp.array(actuator_to_qvel_list, dtype=jp.int32)
-        
+
+        # [2026-09-29 FIX] 重心オフセットDRの適用先。旧実装は body_ipos[0] (= world body)
+        # に加算しており、物理挙動に一切反映されていなかった。freejointを持つ胴体(root)を使う。
+        if sys_mj_model.njnt > 0 and sys_mj_model.jnt_type[0] == mujoco.mjtJoint.mjJNT_FREE:
+            self._root_body_id = int(sys_mj_model.jnt_bodyid[0])
+        else:
+            self._root_body_id = min(1, sys_mj_model.nbody - 1)
+
         from envs.mjx_rewards import MJXRewardSystem
         left_foot_id = mujoco.mj_name2id(sys_mj_model, mujoco.mjtObj.mjOBJ_BODY, 'doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidariaikabu_hidariashiura_hidariashiura-1')
         right_foot_id = mujoco.mj_name2id(sys_mj_model, mujoco.mjtObj.mjOBJ_BODY, 'doutai-v5_migidaitou_migikokansetu_migimomo_migihizabu_migigaikabu_migiashiura_migiashiura-1')
@@ -153,7 +160,11 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         self._reward_system = MJXRewardSystem(self._mjx_model, RobotConfig.REWARD_WEIGHTS, left_foot_id, right_foot_id)
         
         from envs.cbf import CBFSafetyFilter
-        self._cbf = CBFSafetyFilter()
+        # [2026-09-29 FIX] DEFAULT姿勢が可動域端にある関節(hip_yaw/shoulder_pitch/elbow)で
+        # CBFマージンがDEFAULT自体を安全域外にしないよう、nominal_poseを渡す。
+        self._cbf = CBFSafetyFilter(
+            nominal_pose=jp.asarray(RobotConfig.DEFAULT_JOINT_ANGLES[:sys_mj_model.nu], dtype=jp.float32)
+        )
 
     @property
     def action_size(self):
@@ -189,7 +200,7 @@ class SenpuuMaruMJXEnv(PipelineEnv):
             randomized = randomized.replace(geom_friction=jp.asarray(model.geom_friction) * fric_scale)
         if hasattr(model, 'body_ipos') and model.body_ipos.shape[0] > 0:
             body_ipos = jp.asarray(model.body_ipos).copy()
-            body_ipos = body_ipos.at[0].add(jp.asarray(com_offset, dtype=body_ipos.dtype))
+            body_ipos = body_ipos.at[self._root_body_id].add(jp.asarray(com_offset, dtype=body_ipos.dtype))
             randomized = randomized.replace(body_ipos=body_ipos)
 
         return randomized
@@ -233,7 +244,10 @@ class SenpuuMaruMJXEnv(PipelineEnv):
             target_indices = self._actuator_to_qpos_idx[:num_act]
             qpos = qpos.at[target_indices].set(default_angles)
 
-            base_position = jp.array([0.0, 0.0, 0.1773], dtype=jp.float32) + com_offset
+            # [2026-09-29 FIX] 旧実装は com_offset を spawn 位置にも加算しており、
+            # 胴体が最大±2cm 床へめり込む/落下する状態から開始していた。
+            # com_offset は _apply_domain_randomization() で重心位置にのみ反映する。
+            base_position = jp.array([0.0, 0.0, RobotConfig.INITIAL_HEIGHT], dtype=jp.float32)
             qpos = qpos.at[0:3].set(base_position)
             qpos = qpos.at[3:7].set(jp.array([1.0, 0.0, 0.0, 0.0]))
             
@@ -241,17 +255,23 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         mjx_data = mjx.forward(randomized_model, mjx_data)
         
         initial_potential = self._reward_system.compute_potential(mjx_data)
-        
+
+        # [2026-09-29 FIX] 指令系(LPF状態・遅延バッファ・前回指令)を reset 時の実関節角で初期化する。
+        # 旧実装はゼロ初期化だったため、中腰で spawn した直後の約10stepは「膝0rad(伸展)」を
+        # 指令し続け、胴体の跳ね上がり・両足接地の喪失・足裏の滑り(Gate A で約6mm超)を
+        # reset のたびに引き起こしていた。
+        initial_cmd = mjx_data.qpos[self._actuator_to_qpos_idx]
+
         info = {
             'step': 0,
             'global_step': 0,
             'phase': 0.0,
-            'last_action': jp.zeros(self._mjx_model.nu),
+            'last_action': initial_cmd,
             'action_buffer': jp.zeros(self._mjx_model.nu),
-            'filtered_action': jp.zeros(self._mjx_model.nu),
-            'double_last_action': jp.zeros(self._mjx_model.nu),
-            'triple_last_action': jp.zeros(self._mjx_model.nu),
-            'action_history': jp.zeros((RobotConfig.HISTORY_LEN, self._mjx_model.nu)),
+            'filtered_action': initial_cmd,
+            'double_last_action': initial_cmd,
+            'triple_last_action': initial_cmd,
+            'action_history': jp.tile(initial_cmd, (RobotConfig.HISTORY_LEN, 1)),
             'obs_history': jp.zeros((RobotConfig.HISTORY_LEN, RobotConfig.BASE_OBS_DIM)),
             'servo_temp': servo_temp,
             'supply_volt': supply_volt[0],

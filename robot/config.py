@@ -37,7 +37,9 @@ class RobotConfig:
     
     # Actuator: Hiwonder HX-30HM Serial Bus Servo (Magnetic Encoder)
     # Spec: 30kg.cm (11.1V) -> 2.94 N.m
-    MOTOR_MAX_TORQUE = 3.0       # [N.m] HX-30HMに合わせて修正
+    # [2026-09-29] カタログ値(30kg.cm@11.1V=2.94N.m)に合わせ、assets/humanoid/humanoid.xml の
+    # 全アクチュエータ forcerange と一致させる(tests/test_reset_and_cbf_contract.py で検証)。
+    MOTOR_MAX_TORQUE = 2.94      # [N.m] HX-30HMに合わせて修正
     MOTOR_MAX_VELOCITY = 6.5     # [rad/s] (0.19sec/60deg @11.1V)
     
     # 関節定義 (Fusion 360のURDFとIDを一致させること)

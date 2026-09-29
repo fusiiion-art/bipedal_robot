@@ -16,6 +16,16 @@ safety/cbf.py — Control Barrier Function (CBF) Safety Layer for Bipedal Postur
   (このロジックは元々 mjx_env.py 側に直接書かれていたが、CBFの
   挙動を診断する処理であるため、責務としてこちらのクラスに移した)
 
+【Gate A 診断対応 (2026-09-29)】
+- [CBF-5 FIXED] nominal_pose を受け取り、各側のマージンを「nominal_pose と
+  可動域端の距離」までに制限する。hip_yaw/shoulder_pitch/elbow は可動域が
+  [0, π] / [-π, 0] の片側のみで DEFAULT=0 が端にあるため、旧実装では
+  DEFAULT 自体が安全域外(0.157rad内側へ強制)になり、股関節が常に約8°
+  ヨーした姿勢でしか立てず、cbf_correction_norm に √6×0.157≈0.385 の
+  除去不能な下限が生じていた。
+- [CBF-6 FIXED] margin_penalty の softplus(0)=ln2 による定数オフセットを除去。
+  旧実装は違反ゼロでも 20関節×2側×ln2×0.5≈13.9 のペナルティを常時返していた。
+
 設計理念:
   学習時: 簡易版CBF（クリップ + ペナルティ）で微分可能性を保証
   実機時: 実装 safety/cbf_realworld.py で QP ベースの strict CBF へ切り替え
@@ -52,10 +62,15 @@ class CBFSafetyFilter:
       第2クランプ（CBF側）:「ハードストップが不要になる」ように RL を訓練
     """
     
-    def __init__(self):
+    def __init__(self, nominal_pose: jp.ndarray = None):
         """
         初期化。マージンを config.py から取得。
+
+        Args:
+            nominal_pose: 関節の基準姿勢 [rad] shape=(n_joints,)。指定時は安全域が
+                必ずこの姿勢を含むようにマージンを制限する ([CBF-5])。
         """
+        self.nominal_pose = nominal_pose
         self.max_torque = RobotConfig.MOTOR_MAX_TORQUE
         self.max_vel = RobotConfig.MOTOR_MAX_VELOCITY
         
@@ -89,9 +104,17 @@ class CBFSafetyFilter:
         
         # [CBF-1 FIXED] 可動域の margin_ratio% をマージンとして計算
         margins = ranges * self.margin_ratio
-        
-        safe_lower = limit_lower + margins
-        safe_upper = limit_upper - margins
+        lower_margins = margins
+        upper_margins = margins
+
+        # [CBF-5 FIXED] 基準姿勢が可動域端に近い側はマージンをその距離までに縮め、
+        # 基準姿勢そのものが安全域外にならないようにする。
+        if self.nominal_pose is not None:
+            lower_margins = jp.minimum(margins, jp.maximum(self.nominal_pose - limit_lower, 0.0))
+            upper_margins = jp.minimum(margins, jp.maximum(limit_upper - self.nominal_pose, 0.0))
+
+        safe_lower = limit_lower + lower_margins
+        safe_upper = limit_upper - upper_margins
         
         return safe_lower, safe_upper
     
@@ -173,9 +196,11 @@ class CBFSafetyFilter:
             # softplus: smooth approximation of ReLU
             # softplus(x) = (1/β) * log(1 + exp(β*x))
             # β=10 で ReLU に近づく（微分可能）
+            # [CBF-6 FIXED] softplus(0)=ln2 を差し引き、違反ゼロでペナルティ0にする
             margin_penalty = jp.sum(
                 jax.nn.softplus(self.softplus_steepness * upper_excess) +
-                jax.nn.softplus(self.softplus_steepness * lower_excess)
+                jax.nn.softplus(self.softplus_steepness * lower_excess) -
+                2.0 * jp.log(2.0)
             )
             
             # 両方を組み合わせ
