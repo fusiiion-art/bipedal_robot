@@ -666,10 +666,25 @@ def main():
         training_progress = min(num_steps / max(steps, 1), 1.0) if steps > 0 else 0.0
         print(f"Step: {num_steps:10d} | Reward: {reward:.4f} | Progress: {training_progress:.2%}", flush=True)
 
+        # [2026-09-29] best/worst checkpoint の選定基準。通常の eval/* は Brax Evaluator が
+        # reset のたびに training_progress≈0 へ戻すため、ソフトペナルティがほぼ0の報酬になり、
+        # 学習の最終目的(Gate A 判定時の progress=1.0)と一致しない。同じ step の
+        # training_progress 固定・deterministic 評価(disturbed eval)があればそちらを使う。
+        # (外乱カリキュラム有効時は --eval_curriculum_progress の外乱下での報酬になる)
+        selection_reward = float(reward)
+        selection_source = "eval/episode_reward"
+        if disturbed_eval_log and disturbed_eval_log[-1].get('step') == int(num_steps):
+            d_reward = disturbed_eval_log[-1].get('disturbed_eval/episode_reward')
+            if isinstance(d_reward, float) and np.isfinite(d_reward):
+                selection_reward = d_reward
+                selection_source = "disturbed_eval/episode_reward"
+
         # JSONログ用の辞書作成
         metrics_dict = {
             "step": int(num_steps),
             "reward": float(reward),
+            "selection_reward": selection_reward,
+            "selection_source": selection_source,
             "training_progress": float(training_progress),
             "num_envs": int(num_envs),
             "episode_length": int(episode_length),
@@ -702,17 +717,17 @@ def main():
             
         # 最高のモデルと最低のモデルを保存
         if current_params is not None:
-            if reward > best_reward:
-                best_reward = reward
+            if selection_reward > best_reward:
+                best_reward = selection_reward
                 with open(run_dir / "best_params.pkl", "wb") as f:
                     pickle.dump(current_params, f)
-                print(f"  >>> Best Model Saved! (Reward: {reward:.4f})", flush=True)
-                
-            if reward < worst_reward:
-                worst_reward = reward
+                print(f"  >>> Best Model Saved! ({selection_source}: {selection_reward:.4f})", flush=True)
+
+            if selection_reward < worst_reward:
+                worst_reward = selection_reward
                 with open(run_dir / "worst_params.pkl", "wb") as f:
                     pickle.dump(current_params, f)
-                print(f"  >>> Worst Model Saved! (Reward: {reward:.4f})", flush=True)
+                print(f"  >>> Worst Model Saved! ({selection_source}: {selection_reward:.4f})", flush=True)
 
     print(f"Starting training: num_envs={num_envs}, steps={steps}, episode_length={episode_length}")
     start_time = time.time()

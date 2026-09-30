@@ -150,8 +150,14 @@ class TrainingProgressWrapper(Wrapper):
 class EpisodeInfoResetWrapper(Wrapper):
     """AutoResetWrapperはpipeline_state/obs/Brax自身のinfo['steps']しかリセットしない。
     raw envが独自にinfoへ積んでいるepisode-scopedなフィールドは、そのままでは
-    エピソード境界をまたいで持ち越されてしまう。これを、直前episodeがdoneだった
-    envスロットについてのみ、reset()相当の初期値に戻す。"""
+    エピソード境界をまたいで持ち越されてしまう。これを、このstepでdoneになった
+    envスロットについてのみ、reset()相当の初期値に戻す。
+
+    [2026-09-29 FIX] AutoResetWrapperはdoneになったstepの戻り値の時点で既に
+    pipeline_state/obsを初期状態へ差し替えている。旧実装は「入力stateのdone」
+    (=1step遅れ)で判定していたため、新episodeの最初の1stepが前episodeの
+    指令履歴(filtered_action等)・DR値・last_potential・info['step']のまま
+    実行されていた。戻り値のdoneで判定し、pipeline_stateと同じstepで揃える。"""
 
     RESETTABLE_KEYS = (
         "step", "last_potential", "action_history", "obs_history",
@@ -163,7 +169,6 @@ class EpisodeInfoResetWrapper(Wrapper):
     )
 
     def step(self, state, action):
-        was_done = state.done  # 直前ステップでこのスロットのepisodeが終わっていたか
         is_batched = state.obs.ndim > 1
         if is_batched:
             keys = jax.vmap(jax.random.split)(state.info["rng_key"])
@@ -175,7 +180,8 @@ class EpisodeInfoResetWrapper(Wrapper):
 
         state = self.env.step(state, action)
 
-        d = was_done > 0.5
+        # このstepでdoneになった(=AutoResetWrapperが初期状態へ差し替えた)スロット
+        d = state.done > 0.5
         def pick(fresh, cur):
             cond = d
             if cond.ndim:

@@ -420,8 +420,15 @@ class MJXRewardSystem:
 
         # --- 10. ペナルティスケジューリング ---
         warmup_steps = getattr(RobotConfig, 'PENALTY_INTRA_EPISODE_WARMUP_STEPS', 30)
-        intra_ep_scale = jp.clip(step / jp.maximum(warmup_steps, 1), 0.0, 1.0)
-        progress_scale = 1.0 if training_progress is None else jp.clip(training_progress, 0.0, 1.0)
+        # warmup_steps<=0 は「猶予なし」。step/max(0,1) だと step=0(初回step)で0になるため分岐する。
+        intra_ep_scale = 1.0 if warmup_steps <= 0 else jp.clip(step / warmup_steps, 0.0, 1.0)
+        progress_ramp = getattr(RobotConfig, 'PENALTY_PROGRESS_RAMP_FRACTION', 1.0)
+        if training_progress is None:
+            progress_scale = 1.0
+        elif progress_ramp <= 0.0:
+            progress_scale = jp.array(1.0)
+        else:
+            progress_scale = jp.clip(training_progress / progress_ramp, 0.0, 1.0)
         penalty_scale = intra_ep_scale * progress_scale
 
         safety_warmup_steps = getattr(RobotConfig, 'SAFETY_PENALTY_WARMUP_STEPS', 10)

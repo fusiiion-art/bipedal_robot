@@ -40,7 +40,8 @@ class RobotConfig:
     # [2026-09-29] カタログ値(30kg.cm@11.1V=2.94N.m)に合わせ、assets/humanoid/humanoid.xml の
     # 全アクチュエータ forcerange と一致させる(tests/test_reset_and_cbf_contract.py で検証)。
     MOTOR_MAX_TORQUE = 2.94      # [N.m] HX-30HMに合わせて修正
-    MOTOR_MAX_VELOCITY = 6.5     # [rad/s] (0.19sec/60deg @11.1V)
+    # [2026-09-29] 旧値6.5は注記の仕様(60deg/0.19s = 5.51rad/s)と不一致だった。
+    MOTOR_MAX_VELOCITY = np.deg2rad(60) / 0.19  # [rad/s] ≈5.51 (0.19sec/60deg @11.1V)
     
     # 関節定義 (Fusion 360のURDFとIDを一致させること)
     # 旋風丸の本稼働用設定 (20 DOF)
@@ -243,7 +244,12 @@ class RobotConfig:
     # 5秒間、学習終盤まで恒久的にペナルティが消失していた。
     # 短いエピソード内グレース(物理リセット直後の過渡応答許容)に短縮し、
     # 学習全体の進行度は training_progress (外部供給) で分離する。
-    PENALTY_INTRA_EPISODE_WARMUP_STEPS = 30   # 0.3秒
+    # [2026-09-29] reset直後の過渡応答(指令系のゼロ初期化が原因)は envs/mjx_env.py の
+    # reset() 修正で解消したため撤廃(0 = 猶予なし)。Gate A は step 1 から足裏変位を測る。
+    PENALTY_INTRA_EPISODE_WARMUP_STEPS = 0
+    # [2026-09-29] ソフトペナルティは training_progress がこの割合に達した時点で満額にする。
+    # 旧実装は学習全体(進捗0→1)で線形に立ち上げており、満額になるのは学習の最後だけだった。
+    PENALTY_PROGRESS_RAMP_FRACTION = 0.3
     # CBF/バリア等ハードウェア安全項は独立した高速ランプ
     SAFETY_PENALTY_WARMUP_STEPS = 10          # 0.1秒
 

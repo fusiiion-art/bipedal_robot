@@ -17,7 +17,7 @@ jax = pytest.importorskip("jax")
 jp = pytest.importorskip("jax.numpy")
 mujoco = pytest.importorskip("mujoco")
 brax = pytest.importorskip("brax")
-from brax.envs.wrappers.training import AutoResetWrapper, VmapWrapper
+from brax.envs.wrappers.training import AutoResetWrapper, EpisodeWrapper, VmapWrapper
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -55,11 +55,25 @@ def test_domain_randomization_differs_per_env_under_vmap():
     assert len(unique_scales) > 1, f"Expected varied mass scales across envs, got {unique_scales}"
 
 
+def _assert_episode_info_reset_on_done_step(state, initial_cmd, reset_slot, other_slots):
+    steps = np.asarray(state.info["step"])
+    done = np.asarray(state.done)
+    assert done[reset_slot] == 1.0 and np.all(done[other_slots] == 0.0), done
+    # doneになったstepの戻り値の時点で、pipeline_state(AutoResetWrapperが差し替え済み)と
+    # 同時にinfoも初期化されていること(1step遅れると次episodeの初回stepが前episodeの
+    # 指令履歴のまま実行される)。
+    assert steps[reset_slot] == 0, f"Expected slot {reset_slot} to reset to 0, got {steps[reset_slot]}"
+    assert np.all(steps[other_slots] == 2), f"Expected other slots to advance to 2, got {steps[other_slots]}"
+    filtered = np.asarray(state.info["filtered_action"])
+    assert np.allclose(filtered[reset_slot], initial_cmd[reset_slot])
+
+
 def test_auto_reset_resets_episode_scoped_info():
     """項目3の回帰防止: AutoResetWrapper配下でepisodeが終わったスロットの
-    info['step']等がリセットされることを確認する。"""
+    info['step']等が、doneになったstepでリセットされることを確認する。"""
     env = SenpuuMaruMJXEnv()
-    wrapped = AutoResetWrapper(env)
+    wrapped = EpisodeWrapper(env, episode_length=2, action_repeat=1)
+    wrapped = AutoResetWrapper(wrapped)
     wrapped = EpisodeInfoResetWrapper(wrapped)
 
     reset_fn = jax.jit(jax.vmap(wrapped.reset))
@@ -68,6 +82,7 @@ def test_auto_reset_resets_episode_scoped_info():
     num_envs = 2
     keys = jax.random.split(jax.random.PRNGKey(0), num_envs)
     state = reset_fn(keys)
+    initial_cmd = np.asarray(state.info["filtered_action"])
 
     # 初期状態
     initial_steps = np.asarray(state.info["step"])
@@ -79,38 +94,33 @@ def test_auto_reset_resets_episode_scoped_info():
     steps_after_step1 = np.asarray(state.info["step"])
     assert np.all(steps_after_step1 == 1), f"Expected 1 step after first transition, got {steps_after_step1}"
 
-    # スロット0のみ強制的に done=1.0 にして次ステップを実行（AutoResetWrapper/EpisodeInfoResetWrapperを発動）
-    state = state.replace(done=jp.array([1.0, 0.0]))
+    # スロット1のBraxエピソードカウンタだけ巻き戻し、次stepでスロット0のみ
+    # time limit(episode_length=2)によるdoneを発生させる
+    state.info["steps"] = jp.array([1.0, 0.0])
     state = step_fn(state, action)
-
-    # スロット0はリセットされて step=0、スロット1はリセットされずに step=2 になるはず
-    steps_after_reset = np.asarray(state.info["step"])
-    assert steps_after_reset[0] == 0, f"Expected slot 0 to reset to 0, got {steps_after_reset[0]}"
-    assert steps_after_reset[1] == 2, f"Expected slot 1 to advance to 2, got {steps_after_reset[1]}"
+    _assert_episode_info_reset_on_done_step(state, initial_cmd, reset_slot=0, other_slots=[1])
 
 
 def test_auto_reset_resets_episode_scoped_info_batched():
-    """train_mjx.pyと同様にVmapWrapperが内側にある場合（batched state）の動作を検証する。"""
+    """train_mjx.py(brax.envs.training.wrap)と同じ Vmap→Episode→AutoReset の順で検証する。"""
     env = SenpuuMaruMJXEnv()
     num_envs = 4
     wrapped = VmapWrapper(env)
+    wrapped = EpisodeWrapper(wrapped, episode_length=2, action_repeat=1)
     wrapped = AutoResetWrapper(wrapped)
     wrapped = EpisodeInfoResetWrapper(wrapped)
 
     step_fn = jax.jit(wrapped.step)
     keys = jax.random.split(jax.random.PRNGKey(42), num_envs)
     state = jax.jit(wrapped.reset)(keys)
+    initial_cmd = np.asarray(state.info["filtered_action"])
 
     action = jp.zeros((num_envs, env.action_size))
     state = step_fn(state, action)
     assert np.all(np.asarray(state.info["step"]) == 1)
 
-    # スロット0のみ強制的に done=1.0 にして次ステップを実行
-    state = state.replace(done=jp.array([1.0, 0.0, 0.0, 0.0]))
+    # スロット0のみtime limitでdoneにする
+    state.info["steps"] = jp.array([1.0, 0.0, 0.0, 0.0])
     state = step_fn(state, action)
-    steps = np.asarray(state.info["step"])
-    assert steps[0] == 0, f"Expected slot 0 to reset to 0, got {steps[0]}"
-    assert steps[1] == 2, f"Expected slot 1 to advance to 2, got {steps[1]}"
-    assert steps[2] == 2
-    assert steps[3] == 2
+    _assert_episode_info_reset_on_done_step(state, initial_cmd, reset_slot=0, other_slots=[1, 2, 3])
 
