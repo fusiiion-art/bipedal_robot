@@ -146,7 +146,10 @@ class RobotConfig:
     TARGET_VEL_X = 0.0
     TARGET_VEL_Y = 0.0
     TARGET_YAW_RATE = 0.0
-    MAX_FOOT_TRANSLATION = 0.005  # [m], 5 mm 未満を許容
+    # [2026-10-01 方針決定] 目的は直立姿勢の維持であり、足裏が初期位置から多少ずれることは許容する。
+    # ただし閾値を外すと「足を滑らせて逃げる」立ち方も合格になるため、歩行・踏み出しの歯止めとして
+    # 20mm を残す(旧5mm)。Gate A の slip_ok 判定(scratch/phase0_eval_diagnostics.py)で使用。
+    MAX_FOOT_TRANSLATION = 0.020  # [m], 20 mm 以下を許容
     MAX_SINGLE_FOOT_LIFT = 0.0
     FOOT_CONTACT_THRESHOLD = 0.5  # [N] シミュレーション上の各足FSR4センサー平均の最小接触力 (足全体で2.0N以上)
     
