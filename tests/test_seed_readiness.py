@@ -250,6 +250,21 @@ def test_ppo_step_arithmetic_matches_brax_formula():
     assert arith["expected_total_env_steps"] == 19 * 13 * 40960
 
 
+def test_robot_config_snapshot_is_json_and_hash_tracks_changes(monkeypatch):
+    """[T1] run_manifest に記録する RobotConfig 全定数が JSON 化でき、値が変わればハッシュも変わる。"""
+    from train.train_mjx import _robot_config_snapshot, parse_args
+
+    snap = _robot_config_snapshot()
+    json.dumps(snap)
+    assert snap["constants"]["MAX_FOOT_TRANSLATION"] == RobotConfig.MAX_FOOT_TRANSLATION
+    assert "DEFAULT_JOINT_ANGLES" in snap["constants"] and "REWARD_WEIGHTS" in snap["constants"]
+    assert _robot_config_snapshot()["sha256"] == snap["sha256"]
+    monkeypatch.setattr(RobotConfig, "KP", RobotConfig.KP + 1.0)
+    assert _robot_config_snapshot()["sha256"] != snap["sha256"]
+
+    assert parse_args(["--allow-dirty"]).allow_dirty and parse_args(["--allow_dirty"]).allow_dirty
+
+
 @pytest.mark.skipif(shutil.which("git") is None, reason="git not available")
 def test_git_provenance_only_counts_real_changes_to_tracked_files(tmp_path):
     """WSL から Windows の作業ツリーを見たときの改行コード・実行権限だけの差分や、

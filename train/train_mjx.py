@@ -408,6 +408,50 @@ def _git_provenance(repo_root) -> dict:
     }
 
 
+def _robot_config_snapshot() -> dict:
+    """[T1] RobotConfig の全定数 (大文字の属性) を JSON 化した値と、その SHA-256 を返す。
+
+    同じハッシュなら同じ設定で学習したと言える (numpy配列・Path・slice は JSON で表せる形に変換)。"""
+    import hashlib
+    import json
+
+    def _jsonable(value):
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        if isinstance(value, (np.floating, np.integer)):
+            return value.item()
+        if isinstance(value, dict):
+            return {str(k): _jsonable(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [_jsonable(v) for v in value]
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        return repr(value)
+
+    constants = {
+        name: _jsonable(getattr(RobotConfig, name))
+        for name in sorted(dir(RobotConfig))
+        if name.isupper() and not callable(getattr(RobotConfig, name))
+    }
+    canonical = json.dumps(constants, sort_keys=True, ensure_ascii=False)
+    return {"sha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest(), "constants": constants}
+
+
+def _package_versions() -> dict:
+    """[T1] 実際に import される学習系パッケージのバージョンと pip freeze の全行。"""
+    import subprocess
+    from importlib import metadata
+
+    versions = {"python": sys.version.split()[0]}
+    for dist in ("jax", "jaxlib", "brax", "mujoco", "mujoco-mjx", "flax", "optax", "numpy"):
+        try:
+            versions[dist] = metadata.version(dist)
+        except metadata.PackageNotFoundError:
+            versions[dist] = None
+    freeze = subprocess.run([sys.executable, "-m", "pip", "freeze"], capture_output=True, text=True)
+    return {"packages": versions, "pip_freeze": freeze.stdout.splitlines() if freeze.returncode == 0 else None}
+
+
 def _git_diff_patch(repo_root) -> str:
     """作業ツリーの未コミット変更 (--allow_dirty 時に run_dir に保存する)。"""
     import subprocess
@@ -516,7 +560,7 @@ def parse_args(args=None):
         help="観測正規化 std=sqrt(var+eps) の eps (Brax既定0.0)。",
     )
     parser.add_argument(
-        "--allow_dirty", action="store_true",
+        "--allow_dirty", "--allow-dirty", dest="allow_dirty", action="store_true",
         help="未コミットの変更がある作業ツリーでも学習を開始する(run_manifest.jsonにdirtyとして記録)。",
     )
     return parser.parse_args(args)
@@ -917,19 +961,18 @@ def main():
         seed=args.seed,
     )
 
-    import brax as _brax
-    import mujoco as _mujoco
+    package_info = _package_versions()
+    config_snapshot = _robot_config_snapshot()
     manifest = {
         "created_at": datetime.now().isoformat(),
         "argv": sys.argv,
+        "resolved_args": vars(args),
         "git": provenance,
         "allow_dirty": bool(args.allow_dirty),
-        "versions": {
-            "python": sys.version.split()[0],
-            "jax": jax.__version__,
-            "brax": getattr(_brax, "__version__", "unknown"),
-            "mujoco": _mujoco.__version__,
-        },
+        "versions": package_info["packages"],
+        "pip_freeze": package_info["pip_freeze"],
+        "robot_config_sha256": config_snapshot["sha256"],
+        "robot_config": config_snapshot["constants"],
         "devices": [str(d) for d in devices],
         "ppo_config": ppo_config,
         "ppo_step_arithmetic": _ppo_step_arithmetic(

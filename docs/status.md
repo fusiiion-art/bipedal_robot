@@ -13,6 +13,10 @@ ablation で1つずつ戻す順番: T7 → T8 → T9 → T10（T8〜T10 はコ�
 |---|---|---|
 | T7 | `humanoid.xml` に `<contact><exclude>` を追加（股関節ヨー球⇔太もも、床⇔足首ピッチリンク） | 純MuJoCo・デフォルト姿勢1秒PD保持で、FSR合計/体重 67%→100%、左右荷重 55:45→50:50、静止時の最大関節トルク 0.49→0.17 N·m、床と足裏以外の接触 4→0、自己接触 2→0。`tests/test_contact_model.py`（MJX の FSR も検査）。Gate 0 再実行: `pd_hold_mujoco` PASS（roll RMS 0.74°）、`zero_action_mjx` PASS（roll 最大 1.12°、pitch 最大 0.58°）。**物理が変わったため旧 checkpoint とは比較しない** |
 | T2 | `phase0_eval_diagnostics.py`: `--zero-policy`、成功条件を master_plan §0.3 の論理積に（upright 10°・torque_ok 0.01・height_ok 0.02 m・no_illegal_contact 連続2step を追加。閾値は D2 で人間承認済み、`robot/config.py` の `GATE_A_*`）、条件ごとの通過率・足ずれ p50/p95/max・ジッター指標（判定外）、`--episodes` 既定200・`--seed` 既定1000・出力既定を checkpoint の run_dir に | ゼロ行動 5本×4条件が完走。**ゼロ行動は both_feet_contact で 2/5 本落ちた**（初期状態ノイズ 関節±0.05 rad/±0.2 rad/s による reset 直後の片足荷重抜け。指示書の 100/100 は初期状態ノイズ導入前の値）。200本のベースラインは §5 で取る |
+| T3 | `gate_a_qualification.py`: `--baseline`、成功条件ごとの通過率の比較表、閾値に対する必要成功数（n=200: 0.95→197、0.90→189）、`--threshold` 省略時は比較のみ。docstring の held-out 表記を修正。`compare_seeds.py` を任意個の `--reports` と `--baseline` に一般化 | `tests/test_gate_a_qualification.py` |
+| T5 | 学習時 make_policy・評価(diagnostics/gate0)・visualize_rl・ONNX グラフの式の決定論行動が一致 | 4経路とも max\|Δa\| < 1e-5（`tests/test_policy_inference_paths.py`）。ONNX 実グラフの検証は onnx/onnxruntime 未導入のため skip のまま |
+| T6 | `.gitignore` に `log/**/*.pkl` | 既に追跡中の pkl（log/gate_a_seed1, gate_a_v2, smoke_test/version_0）は追跡を外していない（人間判断）。docs のバージョン表記は前回更新済み |
+| T1 | `run_manifest.json` に pip freeze・jaxlib/mujoco-mjx 等のバージョン・解決済み引数・RobotConfig 全定数と SHA-256 を追加。`--allow-dirty` も受け付ける | `tests/test_seed_readiness.py` |
 
 ## 2026-10-02: 3seed学習(Gate A)前の追加レビュー対応
 
