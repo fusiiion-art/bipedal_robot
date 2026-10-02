@@ -255,3 +255,29 @@ def test_actor_needs_only_state_and_critic_reads_privileged_state():
     policy_input_dims = {leaf.shape[0] for leaf in jax.tree_util.tree_leaves(policy) if leaf.ndim == 2}
     assert RobotConfig.PRIVILEGED_OBS_DIM in value_input_dims
     assert RobotConfig.OBS_DIM in policy_input_dims and RobotConfig.PRIVILEGED_OBS_DIM not in policy_input_dims
+
+
+def test_onnx_export_matches_jax_inference(tmp_path):
+    """train/export_onnx.py が書き出した ONNX の出力が JAX の deterministic 推論と一致すること
+    (実機 real/real_env.py の PolicyRunner と同じ onnxruntime で検証)。"""
+    pytest.importorskip("onnx")
+    pytest.importorskip("onnxruntime")
+    import pickle
+    from brax.training.acme import running_statistics, specs
+    from robot.policy_network import default_observation_size, make_policy_network_factory
+    from train.export_onnx import export
+
+    obs_size = default_observation_size()
+    net = make_policy_network_factory(obs_size, NU, preprocess_observations_fn=running_statistics.normalize)
+    normalizer = running_statistics.init_state(
+        {k: specs.Array(v, jp.dtype('float32')) for k, v in obs_size.items()}, std_eps=1e-4)
+    batch = {k: jax.random.normal(jax.random.PRNGKey(i), (64,) + v) * 2.0 + 0.5
+             for i, (k, v) in enumerate(obs_size.items())}
+    normalizer = running_statistics.update(normalizer, batch)
+    params = (normalizer, net.policy_network.init(jax.random.PRNGKey(0)),
+              net.value_network.init(jax.random.PRNGKey(1)))
+    ckpt = tmp_path / "params.pkl"
+    ckpt.write_bytes(pickle.dumps(params))
+
+    max_diff = export(str(ckpt), str(tmp_path / "policy.onnx"))
+    assert max_diff < 1e-4

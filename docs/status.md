@@ -75,9 +75,28 @@
 
 ---
 
+## 動作確認 (2026-10-02)
+
+- `requirements-lock.txt` と同じ構成 (Python 3.12.3 / JAX 0.11.0 / MuJoCo・MJX 3.11.0 / Brax 0.14.2 /
+  Flax 0.12.7 / NumPy 2.4.6) を CPU で再現し、全テスト PASS。500 step エピソードでの学習
+  (16 env, batch 16×8 minibatch, 2 iteration、通常eval・外乱evalとも有効) が exit 0 で完了し、
+  その checkpoint で ONNX 出力 (JAX との最大誤差 1.3e-6)・Gate A 評価・判定スクリプトまで通ることを確認した。
+  128 env の評価は CPU では1回30分以上かかるため未完走。GPU では未確認
+- 標準コマンド (`--steps 200000`, 128 env, `--num_evals` 既定20) は Brax が評価区間ごとに切り上げるため
+  実際には 38 iteration = 389,120 step 学習する。約20万 step にしたい場合は `--num_evals 5` (204,800 step)。
+  実際の値は `run_manifest.json` の `ppo_step_arithmetic` に記録される
+- MuJoCo/MJX 3.2.4 では MJX が touch センサー(FSR)に未対応のため環境の生成自体が失敗する (3.2.7 以上は可)。
+  旧版の本ファイルにあった「JAX 0.4.35 / MuJoCo 3.2.4」は Brax 0.14.2 と両立しない (Brax 0.14.2 は JAX 0.5 以上を要求)
+- 学習開始時の未コミット変更チェックは、追跡中のファイルの中身の変更だけを対象にする
+  (改行コード・実行権限だけの差分、未追跡ファイルでは止まらない)。旧版は評価スクリプトが書き出す
+  `docs/gate_a_diagnosis.md` のような未追跡ファイルでも学習を拒否していた
+- `train/export_onnx.py` は JAX 0.11 では必ず失敗していた (jax2tf が XlaCallModule 1個のグラフを出力し、
+  tf2onnx が変換できない)。ONNX グラフを重みから直接組み立てる方式に変更し、書き出し後に onnxruntime と
+  JAX の出力一致 (最大誤差 1e-4 以下) を検証する。TensorFlow / tf2onnx は不要になった (`onnx` が必要)
+
 ## 次のステップ
 
 1. WSL2/GPU 環境で `./venv_wsl/bin/python -m pytest tests/ -v` を実行する
-2. 変更をコミットしてから、`--seed` だけを変えて3本学習する（未コミットの変更があると起動しない）
+2. 変更をコミットしてから、`--seed` だけを変えて3本学習する（追跡中のファイルに未コミットの変更があると起動しない）
 3. 各 seed の `best_params.pkl` を `scratch/phase0_eval_diagnostics.py --episodes 200` で評価し、
    `scratch/gate_a_qualification.py --threshold <値>` で判定する

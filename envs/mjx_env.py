@@ -172,10 +172,11 @@ class SenpuuMaruMJXEnv(PipelineEnv):
 
     def _apply_domain_randomization(self, model, mass_scale, fric_scale, com_offset):
         """質量・摩擦・胴体重心オフセットのDRを物理モデルに反映する。"""
-        body_ipos = model.body_ipos.at[self._root_body_id].add(com_offset)
+        # MJX のバージョンによっては Model の一部フィールドが numpy 配列のため jp.asarray を通す
+        body_ipos = jp.asarray(model.body_ipos).at[self._root_body_id].add(com_offset)
         return model.replace(
-            body_mass=model.body_mass * mass_scale,
-            geom_friction=model.geom_friction * fric_scale,
+            body_mass=jp.asarray(model.body_mass) * mass_scale,
+            geom_friction=jp.asarray(model.geom_friction) * fric_scale,
             body_ipos=body_ipos,
         )
 

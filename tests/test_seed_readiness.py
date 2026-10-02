@@ -251,7 +251,9 @@ def test_ppo_step_arithmetic_matches_brax_formula():
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git not available")
-def test_git_provenance_ignores_log_outputs(tmp_path):
+def test_git_provenance_only_counts_real_changes_to_tracked_files(tmp_path):
+    """WSL から Windows の作業ツリーを見たときの改行コード・実行権限だけの差分や、
+    未追跡ファイル(評価レポート・メモ)では学習を止めない。中身の変更だけを dirty とする。"""
     from train.train_mjx import _git_provenance
 
     def git(*args):
@@ -260,20 +262,28 @@ def test_git_provenance_ignores_log_outputs(tmp_path):
     git("init", "-q")
     git("config", "user.email", "test@example.com")
     git("config", "user.name", "test")
-    (tmp_path / "a.py").write_text("x = 1\n")
-    git("add", "a.py")
+    (tmp_path / "a.py").write_bytes(b"x = 1\ny = 2\n")
+    (tmp_path / "b.py").write_bytes(b"z = 3\n")
+    (tmp_path / "設定.md").write_text("メモ\n", encoding="utf-8")
+    git("add", ".")
     git("commit", "-q", "-m", "init")
 
     (tmp_path / "log").mkdir()
     (tmp_path / "log" / "out.json").write_text("{}")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "gate_a_diagnosis.md").write_text("report")
+    (tmp_path / "a.py").write_bytes(b"x = 1\r\ny = 2\r\n")   # 改行コードだけ
+    (tmp_path / "b.py").chmod(0o755)                          # 実行権限だけ
     prov = _git_provenance(tmp_path)
-    assert prov["available"] and not prov["dirty"]
+    assert prov["available"] and not prov["dirty"], prov
     assert len(prov["commit"]) == 40
+    assert prov["untracked_files"] == ["docs/gate_a_diagnosis.md"]
 
-    (tmp_path / "a.py").write_text("x = 2\n")
+    (tmp_path / "設定.md").write_text("変更\n", encoding="utf-8")
+    (tmp_path / "a.py").write_bytes(b"x = 2\r\ny = 2\r\n")
     prov = _git_provenance(tmp_path)
     assert prov["dirty"]
-    assert any("a.py" in line for line in prov["dirty_files"])
+    assert sorted(prov["dirty_files"]) == sorted(["a.py", "設定.md"])
 
 
 # ---------------------------------------------------------------------------

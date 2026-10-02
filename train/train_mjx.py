@@ -352,42 +352,70 @@ def _audit_reward_metrics(metrics_dict: dict, metrics_history: list) -> list:
 # ============================================================================
 # 3seedの学習結果を「どのコード・どの設定で得たか」に紐付けるため、学習開始前に
 # git のコミット・作業ツリーの状態・解決済みのPPO設定・Braxのステップ算術を
-# <run_dir>/run_manifest.json に書き出す。作業ツリーに未コミットの変更がある場合は
+# <run_dir>/run_manifest.json に書き出す。追跡中のファイルに未コミットの変更がある場合は
 # 記録したコミットと実際のコードが一致しないため、--allow_dirty 無しでは起動しない。
 
-# 学習出力はリポジトリ内の log/ に書かれるため、作業ツリーの汚れ判定から除外する。
-_PROVENANCE_IGNORED_PREFIXES = ("log/",)
-
-
 def _git_provenance(repo_root) -> dict:
-    """学習に使うコードの git コミットと作業ツリーの状態を返す。"""
+    """学習に使うコードの git コミットと作業ツリーの状態を返す。
+
+    dirty = 追跡中のファイルに中身の変更があること。次は dirty に数えない:
+      - 改行コード(CRLF/LF)だけ・実行権限ビットだけの差分 (Windows の作業ツリーを
+        WSL の git から見ると、変更していないファイルでもこう見えることがある)
+      - 未追跡ファイル (学習ログや評価レポート、手元のメモ等)。一覧は untracked_files に記録する
+    """
     import subprocess
 
-    def _git(*git_args):
+    def _git(*git_args, check=True):
         return subprocess.run(
-            ["git", "-C", str(repo_root), *git_args],
-            capture_output=True, text=True, check=True,
-        ).stdout
+            ["git", "-C", str(repo_root), "-c", "core.fileMode=false", *git_args],
+            capture_output=True, text=True, check=check,
+        )
 
     try:
-        commit = _git("rev-parse", "HEAD").strip()
+        commit = _git("rev-parse", "HEAD").stdout.strip()
     except (OSError, subprocess.CalledProcessError) as e:
         return {"available": False, "error": str(e).strip()}
 
-    branch = _git("rev-parse", "--abbrev-ref", "HEAD").strip()
-    dirty_files = []
-    for line in _git("status", "--porcelain").splitlines():
-        path = line[3:].strip().strip('"')
-        if not path.startswith(_PROVENANCE_IGNORED_PREFIXES):
-            dirty_files.append(line)
+    branch = _git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    # -z: パスをクォート/エスケープせずNUL区切りで受け取る (日本語ファイル名対策)
+    entries = _git("status", "--porcelain", "-z", "--untracked-files=all").stdout.split("\0")
+    changed, untracked = [], []
+    i = 0
+    while i < len(entries):
+        entry = entries[i]
+        i += 1
+        if len(entry) < 4:
+            continue
+        code, path = entry[:2], entry[3:]
+        if code[0] in "RC":
+            i += 1  # rename/copy は次の要素が元のパス
+        if code == "??":
+            if not path.startswith("log/"):
+                untracked.append(path)
+        else:
+            changed.append(path)
+    dirty_files = [
+        path for path in changed
+        if _git("diff", "--ignore-cr-at-eol", "--quiet", "HEAD", "--", path, check=False).returncode != 0
+    ]
     return {
         "available": True,
         "commit": commit,
         "branch": branch,
         "dirty": bool(dirty_files),
         "dirty_files": dirty_files,
-        "diff_stat": _git("diff", "--stat", "HEAD").strip() if dirty_files else "",
+        "untracked_files": untracked,
     }
+
+
+def _git_diff_patch(repo_root) -> str:
+    """作業ツリーの未コミット変更 (--allow_dirty 時に run_dir に保存する)。"""
+    import subprocess
+    return subprocess.run(
+        ["git", "-C", str(repo_root), "-c", "core.fileMode=false",
+         "diff", "--ignore-cr-at-eol", "HEAD"],
+        capture_output=True, text=True,
+    ).stdout
 
 
 def _ppo_step_arithmetic(steps, num_envs, batch_size, num_minibatches, unroll_length,
@@ -452,6 +480,7 @@ def parse_args(args=None):
     parser.add_argument("--unroll_length", type=int, default=10, help="PPOのアクションアンロール長")
     parser.add_argument("--episode_length", type=int, default=None, help="1エピソードのステップ数")
     parser.add_argument("--num_evals", type=int, default=None, help="評価回数")
+    parser.add_argument("--num_eval_envs", type=int, default=128, help="通常evalの並列環境数 (Brax既定128)")
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--num_minibatches", type=int, default=None)
     parser.add_argument("--num_updates_per_batch", type=int, default=4)
@@ -500,18 +529,17 @@ def main():
         print(f"[Warning] gitのコミット情報を取得できません。run_manifest.jsonにコード版を記録できません: "
               f"{provenance.get('error')}")
     elif provenance["dirty"]:
-        print("[Provenance] 作業ツリーに未コミットの変更があります (log/ 配下を除く):")
-        for line in provenance["dirty_files"]:
-            print(f"    {line}")
+        print("[Provenance] 追跡中のファイルに未コミットの変更があります (改行コード・実行権限だけの差分は除く):")
+        for path in provenance["dirty_files"]:
+            print(f"    {path}")
         if not args.allow_dirty:
             raise SystemExit(
                 "未コミットの変更があるため学習を開始しません。記録されるコミット "
                 f"({provenance['commit'][:12]}) と実際に学習するコードが一致しなくなるためです。\n"
-                "変更をコミットしてから再実行するか、意図した実行であれば --allow_dirty を付けてください。\n"
-                "(WSLで /mnt/c 上のリポジトリを使っていて全ファイルが変更扱いになる場合は "
-                "`git config core.fileMode false` を確認してください)"
+                "変更をコミットしてから再実行するか、意図した実行であれば --allow_dirty を付けてください"
+                "(差分は run_dir/uncommitted.patch に保存されます)。"
             )
-        print("[Provenance] --allow_dirty 指定のため続行します (run_manifest.json に dirty=true として記録)。")
+        print("[Provenance] --allow_dirty 指定のため続行します (差分を uncommitted.patch に保存)。")
 
     print("=== MJX GPU Training Pipeline (RMA Enabled) ===")
     devices = jax.devices()
@@ -884,6 +912,7 @@ def main():
         deterministic_eval=True,
 
         num_envs=num_envs,
+        num_eval_envs=args.num_eval_envs,
         batch_size=batch_size,
         seed=args.seed,
     )
@@ -927,6 +956,8 @@ def main():
             json.dump(manifest, f, ensure_ascii=False, indent=2, default=str)
 
     _write_manifest()
+    if provenance.get("dirty"):
+        (run_dir / "uncommitted.patch").write_text(_git_diff_patch(PROJECT_ROOT), encoding="utf-8")
     arith = manifest["ppo_step_arithmetic"]
     print(
         f"[Info] run_manifest: {manifest_path} "

@@ -26,13 +26,22 @@ assets/    MuJoCo モデル (humanoid/humanoid.xml) とメッシュ
 tests/     pytest
 ```
 
+## 動作環境
+
+`requirements-lock.txt` の構成 (Python 3.12 / JAX 0.11.0 / MuJoCo・MJX 3.11.0 / Brax 0.14.2) で
+テストと学習の動作を CPU 上で確認済み (GPU では未確認)。MuJoCo/MJX は **3.2.7 以上が必須**
+(3.2.4 以前の MJX は足裏 FSR の touch センサーに対応しておらず、環境の生成時に
+`NotImplementedError: [mjSENS_TOUCH] not supported` で止まる)。JAX 0.11 は Python 3.12 以上が必要。
+
+確認方法: `./venv_wsl/bin/python -c "import sys, jax, mujoco, brax; print(sys.version, jax.__version__, mujoco.__version__, brax.__version__)"`
+
 ## よく使うコマンド (WSL2)
 
 ```bash
 # テスト
 ./venv_wsl/bin/python -m pytest tests/ -v
 
-# 学習 (未コミットの変更があると起動しない。--allow_dirty で明示的に許可)
+# 学習 (追跡中のファイルに未コミットの変更があると起動しない。--allow_dirty で明示的に許可)
 ./venv_wsl/bin/python train/train_mjx.py --exp_name gate_a --seed 0
 
 # Gate A 評価と判定
@@ -41,6 +50,6 @@ tests/     pytest
 ./venv_wsl/bin/python scratch/gate_a_qualification.py --reports log/gate_a/version_*/gate_a_report.json --threshold 0.95
 
 # 可視化 / 実機用 ONNX 出力
-./venv_wsl/bin/python train/visualize_rl.py --exp_name gate_a --mode plot
+./venv_wsl/bin/python train/visualize_rl.py --exp_name gate_a --mode plot   # 要 matplotlib (lock に未収録)
 ./venv_wsl/bin/python train/export_onnx.py --model log/gate_a/version_0/best_params.pkl --output policy.onnx
 ```

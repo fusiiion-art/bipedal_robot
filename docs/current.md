@@ -79,6 +79,7 @@ critic 観測 `'privileged_state'`（`RobotConfig.PRIVILEGED_OBS_DIM`）= actor 
 - `POLICY_MEAN_CLIP_SCALE = 3.0`, `POLICY_MIN_STD = 0.15`, `POLICY_MAX_STD = 3.0`
 - softsign 式による平均値クリップ + std クリップを `BoundedNormalTanhDistribution` として factory が注入する（brax 本体は書き換えない）
 - checkpoint の読み込み・推論関数の構築は `load_checkpoint()` / `make_inference_fn_from_params()` を使う
+- 実機用 ONNX は `train/export_onnx.py` が重みから直接組み立て、JAX の推論と一致することを検証して書き出す（入力 `observation` [N, 625] → 出力 `action` [N, 20]）
 
 ---
 
