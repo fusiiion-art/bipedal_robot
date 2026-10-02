@@ -161,6 +161,13 @@ class RobotConfig:
     # ただし閾値を外すと「足を滑らせて逃げる」立ち方も合格になるため、歩行・踏み出しの歯止めとして
     # 20mm を残す(旧5mm)。Gate A の slip_ok 判定(scratch/phase0_eval_diagnostics.py)で使用。
     MAX_FOOT_TRANSLATION = 0.020  # [m], 20 mm 以下を許容
+
+    # [T2 2026-10-02] Gate A 成功条件 (master_plan §0.3 の upright / torque_ok / height_ok /
+    # no_illegal_contact)。値は人間承認済み (2026-10-02)。判定は scratch/phase0_eval_diagnostics.py。
+    GATE_A_MAX_TILT_DEG = 10.0             # 胴体z軸とworld鉛直のなす角の最大値 [deg]
+    GATE_A_MAX_TORQUE_SAT_RATE = 0.01      # |τ| >= 0.98·MOTOR_MAX_TORQUE の関節を含むstepの割合
+    GATE_A_MAX_REL_HEIGHT_DROP = 0.02      # 初期の足裏相対高さからの許容低下 [m]
+    GATE_A_ILLEGAL_CONTACT_STEPS = 2       # 床と足裏以外の接触がこのstep数以上連続したら違反
     FOOT_CONTACT_THRESHOLD = 0.5  # [N] シミュレーション上の各足FSR4センサー平均の最小接触力 (足全体で2.0N以上)
     
     # ======================================================

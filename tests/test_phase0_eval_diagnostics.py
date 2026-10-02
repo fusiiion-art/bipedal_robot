@@ -21,7 +21,79 @@ from scratch.phase0_eval_diagnostics import (
     summarize_episode_alive,
     track_sustained_contact_loss,
     interpolate_threshold_crossing,
+    gate_a_criteria,
+    illegal_floor_contact,
+    tilt_from_quat,
+    track_illegal_contact,
 )
+from robot.config import RobotConfig
+import numpy as np
+
+
+# ============================================================================
+# [T2] Gate A 成功条件 (master_plan §0.3) の単体テスト
+# ============================================================================
+
+def _passing_episode(**overrides):
+    kwargs = dict(
+        terminated=False, truncated=True, both_feet_contact=True,
+        max_tilt_deg=0.5, max_foot_displacement=0.004, torque_saturation_rate=0.0,
+        rel_height_drop=0.001, illegal_contact_events=0, cfg=RobotConfig,
+    )
+    kwargs.update(overrides)
+    return gate_a_criteria(**kwargs)
+
+
+def test_gate_a_success_requires_every_criterion():
+    assert _passing_episode()["success"]
+    failing = {
+        "alive": dict(terminated=True),
+        "both_feet_contact": dict(both_feet_contact=False),
+        "upright": dict(max_tilt_deg=RobotConfig.GATE_A_MAX_TILT_DEG + 0.1),
+        "slip_ok": dict(max_foot_displacement=RobotConfig.MAX_FOOT_TRANSLATION + 1e-4),
+        "torque_ok": dict(torque_saturation_rate=RobotConfig.GATE_A_MAX_TORQUE_SAT_RATE + 1e-3),
+        "height_ok": dict(rel_height_drop=RobotConfig.GATE_A_MAX_REL_HEIGHT_DROP + 1e-3),
+        "no_illegal_contact": dict(illegal_contact_events=1),
+    }
+    for name, override in failing.items():
+        checks = _passing_episode(**override)
+        assert not checks[name], name
+        assert not checks["success"], name
+        assert all(v for k, v in checks.items() if k not in (name, "success")), name
+
+
+def test_gate_a_not_alive_without_time_limit():
+    # env の time limit に届かず評価予算で打ち切られた episode は成功に数えない
+    assert not _passing_episode(truncated=False)["success"]
+
+
+def test_tilt_from_quat():
+    assert tilt_from_quat([1.0, 0.0, 0.0, 0.0]) == 0.0
+    half = np.deg2rad(10.0) / 2.0
+    assert np.isclose(np.rad2deg(tilt_from_quat([np.cos(half), np.sin(half), 0.0, 0.0])), 10.0)
+    # ヨーだけの回転は傾きに含めない
+    assert np.isclose(tilt_from_quat([np.cos(0.5), 0.0, 0.0, np.sin(0.5)]), 0.0, atol=1e-9)
+
+
+def test_illegal_contact_needs_consecutive_steps():
+    consecutive, events = 0, 0
+    # 1step だけの接触は違反にしない
+    for now in (True, False, True, False):
+        consecutive, events = track_illegal_contact(now, consecutive, events, required_steps=2)
+    assert events == 0
+    # 連続2step以上で1回。長く続いても1回、途切れて再発したら別の1回
+    for now in (True, True, True, True, False, True, True):
+        consecutive, events = track_illegal_contact(now, consecutive, events, required_steps=2)
+    assert events == 2
+
+
+def test_illegal_floor_contact_detects_only_active_non_sole_floor_pairs():
+    geom_bodyid = np.array([0, 1, 5, 6, 7])   # geom0=床, geom2/3=足裏body 5/6, geom4=足首body 7
+    soles = {5, 6}
+    # 足裏と床の接触、足首と床の非接触候補(dist>0)、胴体同士の接触は違反ではない
+    assert not illegal_floor_contact([0, 0, 1], [2, 4, 4], [-0.001, 0.003, -0.002], geom_bodyid, soles)
+    # 足首と床が実際に接触していたら違反
+    assert illegal_floor_contact([0, 4], [2, 0], [-0.001, -0.0005], geom_bodyid, soles)
 
 
 # ============================================================================

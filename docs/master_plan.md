@@ -348,6 +348,18 @@ success \=
 
 **slip\_okの閾値（2026-10-01決定）**: `MAX_FOOT_TRANSLATION = 20mm`（旧5mm）。目的は直立姿勢の維持であり、足裏が初期位置から多少ずれることは許容する。ただし閾値を外すと「足を滑らせて逃げる」立ち方も合格になるため、歩行・踏み出しの歯止めとして閾値自体は残す。変位はreset直後（step 1）の足裏水平位置からの、episode中の最大距離（左右の足それぞれ）。
 
+**Gate A成功条件の閾値（2026-10-02決定、D2）**: 正本は`robot/config.py`、判定は`scratch/phase0_eval_diagnostics.py`。
+
+| 条件 | 定数 | 値 |
+|---|---|---|
+| upright | `GATE_A_MAX_TILT_DEG`（胴体z軸とworld鉛直のなす角の最大値） | 10° |
+| torque\_ok | `GATE_A_MAX_TORQUE_SAT_RATE`（\|τ\|≥0.98·MOTOR\_MAX\_TORQUE の関節を含むstepの割合） | 0.01 |
+| height\_ok | `GATE_A_MAX_REL_HEIGHT_DROP`（初期の足裏相対高さからの低下） | 0.02 m |
+| no\_illegal\_contact | `GATE_A_ILLEGAL_CONTACT_STEPS`（床と足裏以外の接触の連続step数） | 2step以上の連続が0回 |
+| slip\_ok | `MAX_FOOT_TRANSLATION` | 20 mm |
+
+Wilson下限の合格閾値（0.90 / 0.95）と、判定に使うcheckpoint（`best_params` / `final_params`）は未決定。
+
 ### 0.4 物理限界値の転記（Phase \-1結果）
 
 Phase \-1の計算結果を以下に転記する（**空欄のままGate Bに進むことを禁止**）。

@@ -268,6 +268,66 @@ def track_sustained_contact_loss(
     return consecutive_loss_steps, real_loss
 
 
+def tilt_from_quat(quat) -> float:
+    """胴体z軸とworld鉛直のなす角 [rad] (= arccos(R[2,2]))。quat は [w, x, y, z]。"""
+    q = np.asarray(quat, dtype=np.float64)
+    w, x, y, z = q / max(np.linalg.norm(q), 1e-12)
+    return float(np.arccos(np.clip(1.0 - 2.0 * (x * x + y * y), -1.0, 1.0)))
+
+
+def track_illegal_contact(
+    illegal_now: bool,
+    consecutive_steps: int,
+    violations: int,
+    required_steps: int,
+) -> Tuple[int, int]:
+    """[T2] 床と足裏以外の接触が `required_steps` 以上連続したら違反1回と数える。
+
+    1回の連続区間は長さに関わらず違反1回 (区間が途切れて再発したら別の1回)。"""
+    if not illegal_now:
+        return 0, violations
+    consecutive_steps += 1
+    if consecutive_steps == required_steps:
+        violations += 1
+    return consecutive_steps, violations
+
+
+def illegal_floor_contact(geom1, geom2, dist, geom_bodyid, sole_bodies) -> bool:
+    """接触候補のうち実際に接触している(dist<0)ものに、床(body 0)と足裏以外のbodyの組があるか。"""
+    b1 = np.asarray(geom_bodyid)[np.asarray(geom1)]
+    b2 = np.asarray(geom_bodyid)[np.asarray(geom2)]
+    active = np.asarray(dist) < 0.0
+    other = np.where(b1 == 0, b2, b1)
+    floor_pair = (b1 == 0) | (b2 == 0)
+    return bool(np.any(active & floor_pair & ~np.isin(other, list(sole_bodies))))
+
+
+def gate_a_criteria(
+    *,
+    terminated: bool,
+    truncated: bool,
+    both_feet_contact: bool,
+    max_tilt_deg: float,
+    max_foot_displacement: float,
+    torque_saturation_rate: float,
+    rel_height_drop: float,
+    illegal_contact_events: int,
+    cfg,
+) -> Dict[str, bool]:
+    """[T2] master_plan §0.3 の成功条件の各項と、その論理積 ('success')。閾値は robot/config.py。"""
+    checks = {
+        "alive": (not terminated) and truncated,
+        "both_feet_contact": both_feet_contact,
+        "upright": max_tilt_deg <= cfg.GATE_A_MAX_TILT_DEG,
+        "slip_ok": max_foot_displacement <= cfg.MAX_FOOT_TRANSLATION,
+        "torque_ok": torque_saturation_rate <= cfg.GATE_A_MAX_TORQUE_SAT_RATE,
+        "height_ok": rel_height_drop <= cfg.GATE_A_MAX_REL_HEIGHT_DROP,
+        "no_illegal_contact": illegal_contact_events == 0,
+    }
+    checks["success"] = all(checks.values())
+    return checks
+
+
 def summarize_episode_alive(episode_lengths: Sequence[int]) -> Dict[str, float]:
     arr = np.asarray(episode_lengths, dtype=np.float64)
     if len(arr) == 0:
@@ -302,6 +362,12 @@ class EpisodeResult:
     recovery_time_steps: Optional[int] = None
     torque_saturation_rate: float = 0.0
     final_state_digest: str = ""
+    criteria: Dict[str, bool] = field(default_factory=dict)
+    max_tilt_deg: float = 0.0
+    rel_height_drop: float = 0.0
+    illegal_contact_events: int = 0
+    action_change_rms: float = 0.0
+    joint_vel_rms: float = 0.0
 
 
 def state_digest(qpos, qvel, decimals: int = 6) -> str:
@@ -452,6 +518,18 @@ def run_episode(
     recovery_time_steps = None
     saturated_steps = 0
     measured_torque_steps = 0
+    # [T2] master_plan §0.3 の追加判定項目と、判定に使わないジッター指標
+    foot_ids = ctx.get("foot_ids")
+    max_tilt = 0.0
+    initial_rel_height = _rel_height(state.pipeline_state, foot_ids)
+    min_rel_height = initial_rel_height
+    illegal_consecutive = 0
+    illegal_events = 0
+    prev_action = None
+    action_change_sq_sum = 0.0
+    action_change_count = 0
+    joint_vel_sq_sum = 0.0
+    joint_vel_count = 0
 
     terminated = False
     truncated = False
@@ -467,7 +545,26 @@ def run_episode(
         base_pos = qpos[0:3]
         base_ang_vel = qvel[3:6] if len(qvel) >= 6 else np.zeros(3)
         xpos = np.asarray(state.pipeline_state.xpos)
-        foot_ids = ctx.get("foot_ids")
+
+        action_np = np.asarray(action, dtype=np.float64)
+        if prev_action is not None:
+            action_change_sq_sum += float(np.sum(np.square(action_np - prev_action)))
+            action_change_count += 1
+        prev_action = action_np
+        joint_qvel_idx = ctx.get("joint_qvel_idx")
+        if joint_qvel_idx is not None:
+            joint_vel = qvel[np.asarray(joint_qvel_idx)]
+            joint_vel_sq_sum += float(np.sum(np.square(joint_vel)))
+            joint_vel_count += joint_vel.size
+        max_tilt = max(max_tilt, tilt_from_quat(qpos[3:7]))
+        min_rel_height = min(min_rel_height, _rel_height(state.pipeline_state, foot_ids))
+        if ctx.get("geom_bodyid") is not None:
+            contact = state.pipeline_state.contact
+            illegal_now = illegal_floor_contact(
+                contact.geom1, contact.geom2, contact.dist, ctx["geom_bodyid"], ctx["sole_bodies"])
+            illegal_consecutive, illegal_events = track_illegal_contact(
+                illegal_now, illegal_consecutive, illegal_events, RobotConfig.GATE_A_ILLEGAL_CONTACT_STEPS)
+
         if foot_ids is not None and xpos.ndim == 2:
             foot_positions = xpos[list(foot_ids)]
             if initial_foot_positions is None:
@@ -564,14 +661,27 @@ def run_episode(
     } if metric_count else {}
 
     has_required_contact = both_feet_contact
-    success = (
-        not terminated and truncated and has_required_contact
-        and max_roll <= RobotConfig.TERMINATION_ROLL
-        and max_pitch <= RobotConfig.TERMINATION_PITCH
-        and max_foot_displacement <= RobotConfig.MAX_FOOT_TRANSLATION
+    torque_saturation_rate = saturated_steps / measured_torque_steps if measured_torque_steps else 0.0
+    rel_height_drop = max(0.0, initial_rel_height - min_rel_height)
+    criteria = gate_a_criteria(
+        terminated=terminated,
+        truncated=truncated,
+        both_feet_contact=has_required_contact,
+        max_tilt_deg=float(np.rad2deg(max_tilt)),
+        max_foot_displacement=max_foot_displacement,
+        torque_saturation_rate=torque_saturation_rate,
+        rel_height_drop=rel_height_drop,
+        illegal_contact_events=illegal_events,
+        cfg=RobotConfig,
     )
 
     return EpisodeResult(
+        criteria=criteria,
+        max_tilt_deg=float(np.rad2deg(max_tilt)),
+        rel_height_drop=rel_height_drop,
+        illegal_contact_events=illegal_events,
+        action_change_rms=float(np.sqrt(action_change_sq_sum / action_change_count)) if action_change_count else 0.0,
+        joint_vel_rms=float(np.sqrt(joint_vel_sq_sum / joint_vel_count)) if joint_vel_count else 0.0,
         final_state_digest=state_digest(state.pipeline_state.qpos, state.pipeline_state.qvel),
         length=step_index,
         terminated=terminated,
@@ -579,16 +689,31 @@ def run_episode(
         reason=reason,
         collapse_window=history if terminated else [],
         reward_component_means=reward_component_means,
-        success=success,
+        success=criteria["success"],
         both_feet_contact=has_required_contact,
         max_foot_displacement=max_foot_displacement,
         max_foot_displacement_since_settling=max_foot_displacement_since_settling,
         max_roll_rad=max_roll,
         max_pitch_rad=max_pitch,
         recovery_time_steps=recovery_time_steps,
-        torque_saturation_rate=(saturated_steps / measured_torque_steps
-                    if measured_torque_steps else 0.0),
+        torque_saturation_rate=torque_saturation_rate,
     )
+
+
+def _percentiles(values: Sequence[float]) -> Dict[str, float]:
+    if not values:
+        return {"p50": 0.0, "p95": 0.0, "max": 0.0}
+    arr = np.asarray(values, dtype=np.float64)
+    return {"p50": float(np.percentile(arr, 50)), "p95": float(np.percentile(arr, 95)), "max": float(arr.max())}
+
+
+def _rel_height(pipeline_state, foot_ids) -> float:
+    """胴体高さの、低い方の足裏bodyからの相対値 [m] (envs/mjx_rewards.py の終了判定と同じ定義)。"""
+    qpos = np.asarray(pipeline_state.qpos)
+    xpos = np.asarray(pipeline_state.xpos)
+    if foot_ids is None or xpos.ndim != 2:
+        return float(qpos[2])
+    return float(qpos[2] - np.min(xpos[list(foot_ids), 2]))
 
 
 def run_condition(
@@ -614,6 +739,9 @@ def run_condition(
     max_rolls = []
     max_pitches = []
     contact_successes = 0
+    criteria_counts: Dict[str, int] = {}
+    max_tilts, height_drops, illegal_events = [], [], []
+    action_change_rms, joint_vel_rms = [], []
 
     rng = ctx["jax"].random.PRNGKey(base_seed)
     for ep in range(n_episodes):
@@ -631,6 +759,13 @@ def run_condition(
         max_rolls.append(result.max_roll_rad)
         max_pitches.append(result.max_pitch_rad)
         torque_saturation_rates.append(result.torque_saturation_rate)
+        for name, ok in result.criteria.items():
+            criteria_counts[name] = criteria_counts.get(name, 0) + int(ok)
+        max_tilts.append(result.max_tilt_deg)
+        height_drops.append(result.rel_height_drop)
+        illegal_events.append(result.illegal_contact_events)
+        action_change_rms.append(result.action_change_rms)
+        joint_vel_rms.append(result.joint_vel_rms)
         if result.recovery_time_steps is not None:
             recovery_times.append(result.recovery_time_steps)
         for key, value in result.reward_component_means.items():
@@ -664,6 +799,18 @@ def run_condition(
         "kaplan_meier": {"times": km_times.tolist(), "survival": km_survival.tolist()},
         "failure_timing_diagnosis": timing_diag,
         "success_rate": successes / n_episodes if n_episodes else 0.0,
+        "n_successes": successes,
+        # [T2] master_plan §0.3 の各成功条件を満たしたepisodeの割合 (どの条件で落ちたかの切り分け用)
+        "criteria_pass_rate": {
+            name: count / n_episodes for name, count in criteria_counts.items()
+        } if n_episodes else {},
+        "max_tilt_deg_max": float(max(max_tilts, default=0.0)),
+        "rel_height_drop_max_m": float(max(height_drops, default=0.0)),
+        "illegal_contact_episode_count": int(sum(1 for e in illegal_events if e > 0)),
+        "foot_displacement_m": _percentiles(foot_displacements),
+        # 判定には使わない (レポートのみ): ジッター指標
+        "action_change_rms": _percentiles(action_change_rms),
+        "joint_vel_rms_rad_s": _percentiles(joint_vel_rms),
         "both_feet_contact_rate": contact_successes / n_episodes if n_episodes else 0.0,
         "max_foot_displacement_m": float(max(foot_displacements, default=0.0)),
         "max_foot_displacement_since_settling_m": float(max(foot_displacements_since_settling, default=0.0)),
@@ -690,7 +837,12 @@ def main():
     parser.add_argument("--exp_name", default="", help="log/<exp_name> 配下のcheckpointを使う")
     parser.add_argument("--version", type=int, default=None)
     parser.add_argument("--model", default="best_params.pkl")
-    parser.add_argument("--episodes", type=int, default=20, help="stochastic/randomizedセルのepisode数")
+    parser.add_argument(
+        "--zero-policy", action="store_true",
+        help="[T2] checkpointを使わず常に行動0(デフォルト姿勢のPD保持)を返すベースライン方策で評価する",
+    )
+    # [T2] n=20 では全成功でも Wilson 95% 下限が 0.839 にしかならないため既定を200にする
+    parser.add_argument("--episodes", type=int, default=200, help="stochastic/randomizedセルのepisode数")
     parser.add_argument(
         "--fixed-episodes", type=int, default=3,
         help="deterministic x fixed_dr セルのepisode数(再現性確認用、通常は少数でよい)",
@@ -702,15 +854,20 @@ def main():
         help="max_foot_displacement_since_settling_m診断指標の基準点をreset後何control step目"
              "にするか(既定50step=CONTROL_DT基準で約0.5秒)。judgeには使わない。",
     )
-    parser.add_argument("--seed", type=int, default=0)
+    # [T2] 学習seed(0,1,2,...)と評価の乱数系列を分ける
+    parser.add_argument("--seed", type=int, default=1000, help="評価seed (学習seedとは別系列)")
     parser.add_argument(
         "--force-levels", default=None,
         help="評価する外乱力[N]をカンマ区切りで指定。未指定はRobotConfig.PUSH_FORCE_LEVELS",
     )
-    parser.add_argument("--out", type=Path, default=ROOT / "log" / "phase0_eval_diagnostics.json")
+    # [T2] 旧既定は全runで共有のパスで、seedごとに上書きされていた。既定はcheckpointと同じrun_dir。
     parser.add_argument(
-        "--diagnosis-md", type=Path, default=ROOT / "docs" / "gate_a_diagnosis.md",
-        help="§3.6決定木の一次判定ドラフトを書き出す先(人間/Copilotによるレビュー前提)",
+        "--out", type=Path, default=None,
+        help="詳細レポート(JSON)。既定は <checkpointのrun_dir>/gate_a.json (--zero-policy時は必須)",
+    )
+    parser.add_argument(
+        "--diagnosis-md", type=Path, default=None,
+        help="§3.6決定木の一次判定ドラフト。既定は --out と同じディレクトリの gate_a_diagnosis.md",
     )
     args = parser.parse_args()
 
@@ -733,19 +890,34 @@ def main():
             "--max-stepsを指定しないことを推奨する。"
         )
 
-    model_path = ctx["find_checkpoint"](args.exp_name, args.version, args.model)
-    if model_path is None:
-        raise SystemExit(
-            f"checkpoint not found for exp_name={args.exp_name!r}, version={args.version}, "
-            f"model={args.model!r}. --exp_name / --version / --model を確認してください。"
-        )
-    params = ctx["load_checkpoint"](model_path)
+    if args.zero_policy:
+        if args.out is None:
+            raise SystemExit("--zero-policy では --out を指定してください (例: log/baseline_<commit>/gate_a_zero.json)")
+        model_path = None
+        policy_label = "zero-policy"
+        zero_action = ctx["jp"].zeros(RobotConfig.NUM_JOINTS)
 
-    # deterministic/stochasticはpolicyのみに依存するため一度だけjitする。
-    policy_fns = {
-        det: ctx["jax"].jit(ctx["make_inference_fn_from_params"](params, deterministic=det))
-        for det in (True, False)
-    }
+        def zero_policy(obs, rng):
+            return zero_action, {}
+
+        policy_fns = {True: zero_policy, False: zero_policy}
+    else:
+        model_path = ctx["find_checkpoint"](args.exp_name, args.version, args.model)
+        if model_path is None:
+            raise SystemExit(
+                f"checkpoint not found for exp_name={args.exp_name!r}, version={args.version}, "
+                f"model={args.model!r}. --exp_name / --version / --model を確認してください。"
+            )
+        policy_label = str(model_path)
+        params = ctx["load_checkpoint"](model_path)
+
+        # deterministic/stochasticはpolicyのみに依存するため一度だけjitする。
+        policy_fns = {
+            det: ctx["jax"].jit(ctx["make_inference_fn_from_params"](params, deterministic=det))
+            for det in (True, False)
+        }
+    out_path = args.out or model_path.parent / "gate_a.json"
+    diagnosis_md = args.diagnosis_md or out_path.parent / "gate_a_diagnosis.md"
 
     force_levels = (
         [float(value) for value in args.force_levels.split(",")]
@@ -764,8 +936,17 @@ def main():
 
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "checkpoint": str(model_path),
+        "checkpoint": policy_label,
+        "zero_policy": bool(args.zero_policy),
+        "eval_seed": args.seed,
         "max_steps": max_steps,
+        "gate_a_thresholds": {
+            "max_tilt_deg": RobotConfig.GATE_A_MAX_TILT_DEG,
+            "max_foot_translation_m": RobotConfig.MAX_FOOT_TRANSLATION,
+            "max_torque_saturation_rate": RobotConfig.GATE_A_MAX_TORQUE_SAT_RATE,
+            "max_rel_height_drop_m": RobotConfig.GATE_A_MAX_REL_HEIGHT_DROP,
+            "illegal_contact_consecutive_steps": RobotConfig.GATE_A_ILLEGAL_CONTACT_STEPS,
+        },
         "note_initial_state_randomization": (
             f"全セルで初期状態分布(master_plan.md §1.6)を適用: 関節角 ±{RobotConfig.INIT_JOINT_POS_NOISE} rad, "
             f"関節角速度 ±{RobotConfig.INIT_JOINT_VEL_NOISE} rad/s。'fixed_dr'/'randomized_dr' は"
@@ -773,8 +954,9 @@ def main():
         ),
         "note_termination_reasons": (
             "現行実装(envs/mjx_rewards.py)はfallen_roll/fallen_pitch/fallen_height/"
-            "time_limitのみをterminationとして判定する。non_illegal_contact/slip_ok/"
-            "torque_okによるterminationは未実装(master_plan.md Task4 C-08未着手)。"
+            "time_limitのみをterminationとして判定する。no_illegal_contact/slip_ok/"
+            "torque_ok/height_ok/uprightはterminationではなく、本スクリプトのsuccess判定"
+            "(master_plan.md §0.3の論理積、criteria_pass_rate)で評価する。"
         ),
         "conditions": {},
         "disturbance_model": {
@@ -827,6 +1009,9 @@ def main():
             # トルク上限[N.m]として使っており、上限0.0の関節(hip_yaw/shoulder_pitch/elbow)で
             # |τ|>=0 が常に真となり torque_saturation_rate が必ず1.0になっていた。
             ctx["torque_limit"] = np.full(env._mjx_model.nu, RobotConfig.MOTOR_MAX_TORQUE)
+            ctx["joint_qvel_idx"] = np.asarray(env._actuator_to_qvel_idx)
+            ctx["geom_bodyid"] = np.asarray(env._mj_model.geom_bodyid)
+            ctx["sole_bodies"] = {int(b) for b in np.asarray(env._foot_ids)}
             reset_fn = ctx["jax"].jit(env.reset)
             step_fn = ctx["jax"].jit(env.step)
             result = run_condition(
@@ -839,16 +1024,17 @@ def main():
             )
         key = f"{label}__{dr_label}"
         report["conditions"][key] = result
-        print(f"[{key}] episode_alive mean={result['episode_alive']['mean']:.1f} "
-              f"reasons={result['termination_reason_counts']} "
-              f"timing={result['failure_timing_diagnosis']['classification']}")
+        print(f"[{key}] success={result['n_successes']}/{n_episodes} "
+              f"criteria={ {k: round(v, 3) for k, v in result['criteria_pass_rate'].items()} } "
+              f"episode_alive mean={result['episode_alive']['mean']:.1f} "
+              f"reasons={result['termination_reason_counts']}")
 
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"[Phase0 Eval] detailed report: {args.out}")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"[Phase0 Eval] detailed report: {out_path}")
 
-    _write_diagnosis_draft(args.diagnosis_md, report)
-    print(f"[Phase0 Eval] diagnosis draft: {args.diagnosis_md}")
+    _write_diagnosis_draft(diagnosis_md, report)
+    print(f"[Phase0 Eval] diagnosis draft: {diagnosis_md}")
 
 
 def _write_diagnosis_draft(path: Path, report: dict) -> None:
@@ -873,6 +1059,17 @@ def _write_diagnosis_draft(path: Path, report: dict) -> None:
         ea = result["episode_alive"]
         diag = result["failure_timing_diagnosis"]
         lines.append(f"### {key}")
+        lines.append(f"- success: {result['n_successes']}/{result['n_episodes']}")
+        lines.append(f"- criteria pass rate: {result['criteria_pass_rate']}")
+        fd = result["foot_displacement_m"]
+        lines.append(
+            f"- foot displacement [mm]: p50={fd['p50'] * 1000:.1f}, p95={fd['p95'] * 1000:.1f}, "
+            f"max={fd['max'] * 1000:.1f}"
+        )
+        lines.append(
+            f"- jitter (判定外): action_change_rms p50={result['action_change_rms']['p50']:.4f}, "
+            f"joint_vel_rms p50={result['joint_vel_rms_rad_s']['p50']:.3f} rad/s"
+        )
         lines.append(
             f"- episode_alive: mean={ea['mean']:.1f}, std={ea['std']:.1f}, "
             f"n={ea['n']}"
