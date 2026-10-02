@@ -9,18 +9,11 @@ status.md (2026-09-01) の「次のTask」= 「deterministic/stochastic評価の
 
 設計方針（master_plan.md §3.5 に基づく）:
   - 2x2評価: {deterministic, stochastic} x {fixed_dr, randomized_dr}
-    注意: 本リポジトリの reset() は物理初期姿勢(qpos/qvel)を常に同一の
-    nominal poseに固定しており、初期姿勢そのもののrandomizationは
-    master_plan.md §1.6で「Task1(Gate A是正)の時点で必ず導入する」と
-    定義された未実装機能である。したがって本スクリプトの
-    「初期状態randomize」軸は、既存の実装済みrandomization経路である
-    domain randomization (質量/摩擦/重心オフセット/サーボ温度/電圧) の
-    on/offとして操作する。これは近似であり、真の初期姿勢randomizationの
-    代替ではない。この制約は出力レポートに明記する。
-  - deterministic x fixed_dr のセルは、同一checkpoint・同一初期状態・
-    同一policyであれば理論上ビット単位で再現するはずのセルであり、
-    複数episodeを回す意味は「決定論性テスト」（master_plan.md §4.2）を
-    兼ねる以外にない。デフォルトのepisode数を他セルより少なくしている。
+    初期状態分布(master_plan.md §1.6, envs/mjx_env.py の reset())は全セルで有効。
+    fixed_dr/randomized_dr は domain randomization (質量/摩擦/重心オフセット/
+    サーボ温度/電圧) の幅を中央値に固定するか否か。
+  - deterministic x fixed_dr のセルは DR の影響を除いた参考セルで、
+    デフォルトのepisode数を他セルより少なくしている。
   - 各episodeについて、終了理由 (fallen_roll / fallen_pitch /
     fallen_height / time_limit / unknown の組み合わせ) を分類する。
     非足裏接触・トルク上限による終了は、現行の envs/mjx_rewards.py の
@@ -82,6 +75,7 @@ GPUも実際の学習済みcheckpointも存在しないため、本スクリプ�
 """
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -307,6 +301,15 @@ class EpisodeResult:
     max_pitch_rad: float = 0.0
     recovery_time_steps: Optional[int] = None
     torque_saturation_rate: float = 0.0
+    final_state_digest: str = ""
+
+
+def state_digest(qpos, qvel, decimals: int = 6) -> str:
+    """終端状態(qpos/qvel)の指紋。同一軌道の重複(擬似反復)検出に使う。"""
+    arr = np.concatenate([np.asarray(qpos, dtype=np.float64).ravel(),
+                          np.asarray(qvel, dtype=np.float64).ravel()])
+    rounded = np.round(arr, decimals) + 0.0  # -0.0 と 0.0 を同一視する
+    return hashlib.sha1(rounded.tobytes()).hexdigest()
 
 
 def interpolate_threshold_crossing(
@@ -341,13 +344,7 @@ def _lazy_imports():
     from robot.config import RobotConfig
     from envs.mjx_env import SenpuuMaruMJXEnv
     from robot.math_utils import quat_to_euler
-    from train.visualize_rl import (
-        get_model_path,
-        load_checkpoint,
-        make_policy_network_factory,
-    )
-    from brax.training.agents.ppo import networks as ppo_networks
-    from brax.training.acme import running_statistics
+    from robot.policy_network import find_checkpoint, load_checkpoint, make_inference_fn_from_params
 
     return {
         "jax": jax,
@@ -355,11 +352,9 @@ def _lazy_imports():
         "RobotConfig": RobotConfig,
         "SenpuuMaruMJXEnv": SenpuuMaruMJXEnv,
         "quat_to_euler": quat_to_euler,
-        "get_model_path": get_model_path,
+        "find_checkpoint": find_checkpoint,
         "load_checkpoint": load_checkpoint,
-        "make_policy_network_factory": make_policy_network_factory,
-        "ppo_networks": ppo_networks,
-        "running_statistics": running_statistics,
+        "make_inference_fn_from_params": make_inference_fn_from_params,
     }
 
 
@@ -577,6 +572,7 @@ def run_episode(
     )
 
     return EpisodeResult(
+        final_state_digest=state_digest(state.pipeline_state.qpos, state.pipeline_state.qvel),
         length=step_index,
         terminated=terminated,
         truncated=truncated,
@@ -607,6 +603,7 @@ def run_condition(
     settling_steps: int = 50,
 ) -> dict:
     lengths, terminated_flags, truncated_flags, reasons = [], [], [], []
+    final_state_digests = []
     reward_component_accum: Dict[str, List[float]] = {}
     collapse_examples = []
     successes = 0
@@ -626,6 +623,7 @@ def run_condition(
         terminated_flags.append(result.terminated)
         truncated_flags.append(result.truncated)
         reasons.append(result.reason)
+        final_state_digests.append(result.final_state_digest)
         successes += int(result.success)
         contact_successes += int(result.both_feet_contact)
         foot_displacements.append(result.max_foot_displacement)
@@ -651,8 +649,13 @@ def run_condition(
     real_failure_steps = [l for l, t in zip(lengths, terminated_flags) if t]
     timing_diag = diagnose_failure_timing(real_failure_steps, max_steps)
 
+    n_unique_final_states = len(set(final_state_digests))
     return {
         "n_episodes": n_episodes,
+        # [2026-10-02追加] Wilson区間は独立試行を前提とする。同一の終端状態に至った
+        # episodeが複数あれば、それらは同一軌道の繰り返し(擬似反復)であり実効サンプル数は
+        # n_episodesより小さい。scratch/gate_a_qualification.py がこの値を検査する。
+        "n_unique_final_states": n_unique_final_states,
         "episode_alive": summarize_episode_alive(lengths),
         "termination_reason_counts": dict(Counter(reasons)),
         "termination_reason_rate": {
@@ -714,7 +717,6 @@ def main():
     ctx = _lazy_imports()
     RobotConfig = ctx["RobotConfig"]
     SenpuuMaruMJXEnv = ctx["SenpuuMaruMJXEnv"]
-    ppo_networks = ctx["ppo_networks"]
 
     # Gate AはPhase 0 (無外乱)の診断であるため、外乱は明示的に無効化する。
     RobotConfig.DISTURBANCE_CURRICULUM = False
@@ -731,7 +733,7 @@ def main():
             "--max-stepsを指定しないことを推奨する。"
         )
 
-    model_path = ctx["get_model_path"](args.exp_name, args.version, args.model)
+    model_path = ctx["find_checkpoint"](args.exp_name, args.version, args.model)
     if model_path is None:
         raise SystemExit(
             f"checkpoint not found for exp_name={args.exp_name!r}, version={args.version}, "
@@ -739,26 +741,9 @@ def main():
         )
     params = ctx["load_checkpoint"](model_path)
 
-    # obs/action次元はDR設定に依存しないstructuralな値なので、使い捨てのenv
-    # インスタンスから一度だけ取得すれば十分(policy networkの構築もここでよい)。
-    _probe_env = SenpuuMaruMJXEnv()
-    network = ctx["make_policy_network_factory"](
-        _probe_env.observation_size,
-        _probe_env.action_size,
-        preprocess_observations_fn=ctx["running_statistics"].normalize,
-    )
-    make_policy = ppo_networks.make_inference_fn(network)
-
-    def strip_leading_dim(leaf):
-        if hasattr(leaf, "shape") and getattr(leaf, "ndim", 0) > 0 and leaf.shape[0] == 1:
-            return leaf.squeeze(0)
-        return leaf
-
-    params_stripped = ctx["jax"].tree_util.tree_map(strip_leading_dim, params)
-
     # deterministic/stochasticはpolicyのみに依存するため一度だけjitする。
     policy_fns = {
-        det: ctx["jax"].jit(make_policy(params_stripped, deterministic=det))
+        det: ctx["jax"].jit(ctx["make_inference_fn_from_params"](params, deterministic=det))
         for det in (True, False)
     }
 
@@ -782,9 +767,9 @@ def main():
         "checkpoint": str(model_path),
         "max_steps": max_steps,
         "note_initial_state_randomization": (
-            "物理初期姿勢(qpos/qvel)は常にnominal poseに固定されている(未実装機能、"
-            "master_plan.md付録A §1.6参照)。ここでの'randomized_dr'は質量/摩擦/"
-            "重心オフセット/サーボ温度/電圧のdomain randomizationのon/offを指す近似軸。"
+            f"全セルで初期状態分布(master_plan.md §1.6)を適用: 関節角 ±{RobotConfig.INIT_JOINT_POS_NOISE} rad, "
+            f"関節角速度 ±{RobotConfig.INIT_JOINT_VEL_NOISE} rad/s。'fixed_dr'/'randomized_dr' は"
+            "質量/摩擦/重心オフセット/サーボ温度/電圧のdomain randomizationのon/off。"
         ),
         "note_termination_reasons": (
             "現行実装(envs/mjx_rewards.py)はfallen_roll/fallen_pitch/fallen_height/"

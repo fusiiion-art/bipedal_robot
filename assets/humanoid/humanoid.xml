@@ -49,7 +49,7 @@
             <geom name="doutai-v5_doutai_collision" type="box" pos="0.0000 0.0185 0.0565" size="0.0461 0.0430 0.0605" mass="0.6915" rgba="1.0 0.2 0.2 0.3"/>
             
             <!-- IMUセンサー配置 -->
-            <site name="imu_bno055_site" pos="0.000 0.024 0.030" size="0.01" rgba="1 0 0 1" euler="-90 0 0"/>
+            <site name="imu_bno055_site" pos="0.000 0.024 0.030" size="0.01" rgba="1 0 0 1" euler="-1.5707963 0 0"/>
             
             <!-- 胴体慣性データ (CAD由来) -->
 

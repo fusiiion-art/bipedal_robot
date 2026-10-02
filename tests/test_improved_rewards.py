@@ -177,16 +177,11 @@ def test_stance_penalty_discourages_wide_foot_spacing():
         narrow_data,
         action=jp.zeros(6),
         last_action=jp.zeros(6),
-        double_last_action=jp.zeros(6),
-        triple_last_action=jp.zeros(6),
         cbf_penalty=jp.array(0.0),
         last_potential=jp.array(0.0),
         step=jp.array(10),
-        reference_action=jp.zeros(6),
         servo_temp=jp.full(6, 40.0),
         supply_volt=11.1,
-        global_step=jp.array(1000),
-        gait_phase=0.5,
         was_disturbed=jp.array(False),
         disturbance_recovery_steps=jp.array(1000),
         training_progress=jp.array(0.5),
@@ -196,16 +191,11 @@ def test_stance_penalty_discourages_wide_foot_spacing():
         wide_data,
         action=jp.zeros(6),
         last_action=jp.zeros(6),
-        double_last_action=jp.zeros(6),
-        triple_last_action=jp.zeros(6),
         cbf_penalty=jp.array(0.0),
         last_potential=jp.array(0.0),
         step=jp.array(10),
-        reference_action=jp.zeros(6),
         servo_temp=jp.full(6, 40.0),
         supply_volt=11.1,
-        global_step=jp.array(1000),
-        gait_phase=0.5,
         was_disturbed=jp.array(False),
         disturbance_recovery_steps=jp.array(1000),
         training_progress=jp.array(0.5),
@@ -259,22 +249,18 @@ def test_foot_balance_and_slip_penalty():
 
     r_bal, _, m_bal, _ = reward_system.compute(
         balanced_data, action=jp.zeros(6), last_action=jp.zeros(6),
-        double_last_action=jp.zeros(6), triple_last_action=jp.zeros(6),
         cbf_penalty=jp.array(0.0), last_potential=jp.array(0.0),
-        step=jp.array(10), reference_action=jp.zeros(6),
+        step=jp.array(10),
         servo_temp=jp.full(6, 40.0), supply_volt=11.1,
-        global_step=jp.array(1000), gait_phase=0.5,
         was_disturbed=jp.array(False), disturbance_recovery_steps=jp.array(1000),
         training_progress=jp.array(0.5),
     )
 
     r_unbal, _, m_unbal, _ = reward_system.compute(
         unbalanced_data, action=jp.zeros(6), last_action=jp.zeros(6),
-        double_last_action=jp.zeros(6), triple_last_action=jp.zeros(6),
         cbf_penalty=jp.array(0.0), last_potential=jp.array(0.0),
-        step=jp.array(10), reference_action=jp.zeros(6),
+        step=jp.array(10),
         servo_temp=jp.full(6, 40.0), supply_volt=11.1,
-        global_step=jp.array(1000), gait_phase=0.5,
         was_disturbed=jp.array(False), disturbance_recovery_steps=jp.array(1000),
         training_progress=jp.array(0.5),
     )
@@ -290,22 +276,18 @@ def test_foot_balance_and_slip_penalty():
 
     r_still, _, _, _ = reward_system.compute(
         still_data, action=jp.zeros(6), last_action=jp.zeros(6),
-        double_last_action=jp.zeros(6), triple_last_action=jp.zeros(6),
         cbf_penalty=jp.array(0.0), last_potential=jp.array(0.0),
-        step=jp.array(10), reference_action=jp.zeros(6),
+        step=jp.array(10),
         servo_temp=jp.full(6, 40.0), supply_volt=11.1,
-        global_step=jp.array(1000), gait_phase=0.5,
         was_disturbed=jp.array(False), disturbance_recovery_steps=jp.array(1000),
         training_progress=jp.array(0.5),
     )
 
     r_slip, _, _, _ = reward_system.compute(
         slipping_data, action=jp.zeros(6), last_action=jp.zeros(6),
-        double_last_action=jp.zeros(6), triple_last_action=jp.zeros(6),
         cbf_penalty=jp.array(0.0), last_potential=jp.array(0.0),
-        step=jp.array(10), reference_action=jp.zeros(6),
+        step=jp.array(10),
         servo_temp=jp.full(6, 40.0), supply_volt=11.1,
-        global_step=jp.array(1000), gait_phase=0.5,
         was_disturbed=jp.array(False), disturbance_recovery_steps=jp.array(1000),
         training_progress=jp.array(0.5),
     )
