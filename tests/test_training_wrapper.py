@@ -45,7 +45,6 @@ def test_training_progress_wrapper_counters():
     for expected in range(1, 4):
         state = env.step(state, jp.array([0.0]))
         assert int(np.asarray(state.info["_env_steps"]).squeeze()) == expected
-        assert int(np.asarray(state.info["global_step"]).squeeze()) == expected
         assert np.isclose(float(np.asarray(state.info["training_progress"]).squeeze()), expected / 10.0)
 
 

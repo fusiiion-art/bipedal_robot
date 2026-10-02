@@ -23,7 +23,8 @@
   python train/train_mjx.py --exp_name phase0_debug_seed42 --seed=42 --target_kl=0.02
 
 環境仕様 (robot/config.py が正本):
-  - 観測: 625次元 (base 84 + history 420 + action_history 100 + temp 20 + volt 1)
+  - 観測: dict。actor用 state 625次元 (base 84 + history 420 + action_history 100
+    + temp 20 + volt 1)、critic用 privileged_state (state + シミュレータ真値・DR値)
   - 行動: 20次元 (関節角の残差 Δq、トルク直接指令ではない)
   - エピソード長: 500 step (100Hz制御、5秒)
   - Phase 0: 外乱無効 (DISTURBANCE_CURRICULUM=False)
@@ -62,8 +63,8 @@ os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 import jax
 import jax.numpy as jnp
 
-# Reuse XLA executables across repeated WSL validation/training runs.
-jax.config.update("jax_compilation_cache_dir", "/mnt/c/bipedal_robot/.jax_cache")
+# Reuse XLA executables across repeated validation/training runs (.jax_cache/ は .gitignore 済み)。
+jax.config.update("jax_compilation_cache_dir", os.path.join(PROJECT_ROOT, ".jax_cache"))
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
 if not hasattr(jax, "device_put_replicated"):
@@ -75,12 +76,7 @@ from brax import envs
 from brax.envs import training as brax_training
 from brax.training.agents.ppo import train as ppo
 from brax.training.agents.ppo import networks as ppo_networks
-from robot.policy_network import (
-    POLICY_MAX_STD,
-    POLICY_MEAN_CLIP_SCALE,
-    POLICY_MIN_STD,
-    make_policy_network_factory,
-)
+from robot.policy_network import make_policy_network_factory
 
 # Patch brax _unpmap for JAX 0.4+ Multi-GPU safety
 def _safe_unpmap(v):
@@ -150,20 +146,13 @@ from envs.training_wrapper import TrainingProgressWrapper, EpisodeInfoResetWrapp
 #                              compute_saturation_ratio() 参照。方策が
 #                              実行不能な指令を多発させている、または
 #                              CBF/可動域制限が過剰に効いている可能性)
-#   6. Sensor/Kinematics Fallback - envs/mjx_rewards.py の com_accel が
-#                              qacc取得失敗によるフォールバック値
-#                              [0,0,-9.81]を使用中(com_accel_is_fallback)。
-#                              stability_metrics.py のv2 [CRITICAL FIX]
-#                              で説明されている「zmp_marginが死んだ指標に
-#                              なる」バグの片割れの原因だったため、
-#                              本番での再発を監視する。
 #
 # 依存するmetricsキー (envs/mjx_rewards.py, envs/mjx_env.py,
 # envs/stability_metrics.py, safety/cbf.py で提供):
 #   total_reward, total_penalty, stability_index, zmp_margin, r_upright,
 #   r_com_stab, both_feet_contact, r_cp, r_recovery,
 #   disturbance_recovery_bonus, pbrs_reward, alive, potential,
-#   action_saturation, stability_metrics_finite, com_accel_is_fallback
+#   action_saturation, stability_metrics_finite
 # ============================================================================
 
 REWARD_AUDIT_THRESHOLDS = {
@@ -342,17 +331,6 @@ def _audit_reward_metrics(metrics_dict: dict, metrics_history: list) -> list:
                 f"可能性。"
             )
 
-    # --- 6. Sensor/Kinematics Fallback ---
-    fallback_key = _find_metric_key(metrics_dict, 'com_accel_is_fallback')
-    if fallback_key is not None and metrics_dict[fallback_key] > 0.5:
-        alerts.append(
-            "[Sensor Fallback] com_accel が qacc 取得失敗によりフォール"
-            "バック値[0,0,-9.81]を使用中。envs/mjx_rewards.py の compute() "
-            "内、nq/qacc の条件分岐を確認。ZMPが重心追従に退化し、外乱下の"
-            "不安定性を過小評価している可能性がある(stability_metrics.py "
-            "のv2 changelog参照)。"
-        )
-
     # [予防追加 2026-09-13] envs/mjx_env.py の physics_step ロールバック
     # 機構が実際に発動した頻度を記録する。ロールバックにより学習自体は
     # 汚染されないが、頻発する場合はカリキュラム(外乱強度)や物理タイム
@@ -436,29 +414,33 @@ def _ppo_step_arithmetic(steps, num_envs, batch_size, num_minibatches, unroll_le
 
 
 def _normalizer_summary(params, near_constant_std: float) -> dict:
-    """観測正規化の統計(mean/std)を要約し、stdが下限付近に張り付いたチャネルを列挙する。
+    """観測正規化の統計(mean/std)を観測キーごとに要約し、stdが下限付近に張り付いた
+    チャネルを列挙する。
 
     sim内でほぼ定数のチャネルは、sim外(実機・別条件の評価)でわずかにずれただけで
     正規化後に巨大な値になる。学習後にどのチャネルがそうなっているかを確認するために残す。"""
     normalizer = params[0]
-    mean = np.asarray(getattr(normalizer, "mean")).reshape(-1)
-    std = np.asarray(getattr(normalizer, "std")).reshape(-1)
     std_eps = float(np.asarray(getattr(normalizer, "std_eps", 0.0)).reshape(-1)[0])
-    # std = sqrt(var + eps) なので、eps を除いた観測そのもののばらつきで判定する
-    raw_std = np.sqrt(np.maximum(std ** 2 - std_eps, 0.0))
-    flagged = np.nonzero(raw_std < near_constant_std)[0]
-    return {
-        "std_eps": std_eps,
-        "std_min": float(std.min()),
-        "std_max": float(std.max()),
-        "near_constant_threshold": near_constant_std,
-        "near_constant_channels": [
-            {"index": int(i), "mean": float(mean[i]), "raw_std": float(raw_std[i]), "std": float(std[i])}
-            for i in flagged
-        ],
-        "mean": mean.tolist(),
-        "std": std.tolist(),
-    }
+    means, stds = normalizer.mean, normalizer.std
+    if not isinstance(means, dict):
+        means, stds = {"obs": means}, {"obs": stds}
+    summary = {"std_eps": std_eps, "near_constant_threshold": near_constant_std, "keys": {}}
+    for key in means:
+        mean = np.asarray(means[key]).reshape(-1)
+        std = np.asarray(stds[key]).reshape(-1)
+        # std = sqrt(var + eps) なので、eps を除いた観測そのもののばらつきで判定する
+        raw_std = np.sqrt(np.maximum(std ** 2 - std_eps, 0.0))
+        flagged = np.nonzero(raw_std < near_constant_std)[0]
+        summary["keys"][key] = {
+            "std_min": float(std.min()),
+            "std_max": float(std.max()),
+            "near_constant_channels": [
+                {"index": int(i), "mean": float(mean[i]), "raw_std": float(raw_std[i])} for i in flagged
+            ],
+            "mean": mean.tolist(),
+            "std": std.tolist(),
+        }
+    return summary
 
 
 def parse_args(args=None):
@@ -932,6 +914,9 @@ def main():
             "kp": RobotConfig.KP,
             "kd": RobotConfig.KD,
             "obs_dim": RobotConfig.OBS_DIM,
+            "privileged_obs_dim": RobotConfig.PRIVILEGED_OBS_DIM,
+            "init_joint_pos_noise": RobotConfig.INIT_JOINT_POS_NOISE,
+            "init_joint_vel_noise": RobotConfig.INIT_JOINT_VEL_NOISE,
             "reward_weights": dict(RobotConfig.REWARD_WEIGHTS),
         },
     }
@@ -976,12 +961,12 @@ def main():
     normalizer_summary = _normalizer_summary(params, near_constant_std=1e-3)
     with open(run_dir / "normalizer_stats.json", "w", encoding="utf-8") as f:
         json.dump(normalizer_summary, f, indent=2)
-    if normalizer_summary["near_constant_channels"]:
+    actor_flagged = normalizer_summary["keys"].get("state", {}).get("near_constant_channels", [])
+    if actor_flagged:
         print(
-            f"[Info] sim内でほぼ定数(eps除外前のstd<{normalizer_summary['near_constant_threshold']})の"
-            f"観測チャネルが {len(normalizer_summary['near_constant_channels'])} 個あります。"
-            f"位相・参照角(USE_REFERENCE_GAIT=False時は定数)以外が含まれていないか確認すること。"
-            f"実機で同じ値にならないと正規化後に最大 1/std 倍に増幅される: "
+            f"[Info] actor観測のうちsim内でほぼ定数(eps除外前のstd<{normalizer_summary['near_constant_threshold']})の"
+            f"チャネルが {len(actor_flagged)} 個あります。設計上の定数(base_pos/ZMP/位相/参照角)以外が"
+            f"含まれていないか確認すること。実機で同じ値にならないと正規化後に最大 1/std 倍に増幅される: "
             f"{run_dir / 'normalizer_stats.json'}"
         )
 

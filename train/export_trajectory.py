@@ -1,25 +1,14 @@
 import os
 import sys
-import pickle
 import argparse
 
 import jax
-import jax.numpy as jnp
 import numpy as np
-
-# sysモジュールのパッチ (Windows/WSL上のbrax/orbax依存対策)
-if not hasattr(sys.modules.get("uvloop", None), "__name__"):
-    sys.modules["uvloop"] = type(sys)("uvloop")
-
-from brax import envs
-from brax.training.agents.ppo import networks as ppo_networks
-from brax.training.acme import running_statistics
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from robot.config import RobotConfig
-from envs.mjx_env import SenpuuMaruMJXEnv  # noqa: F401
-from train.train_mjx import make_policy_network_factory
-from train.visualize_rl import load_checkpoint
+from robot.policy_network import find_checkpoint, load_checkpoint, make_inference_fn_from_params
+from envs.mjx_env import SenpuuMaruMJXEnv
 
 def render_trajectory_to_gif(traj: np.ndarray, gif_path: str, height: int = 480, width: int = 640, fps: int = 30):
     """保存済み軌跡データからMuJoCoオフスクリーンレンダラーでGIFを生成する。"""
@@ -71,7 +60,8 @@ def render_trajectory_to_gif(traj: np.ndarray, gif_path: str, height: int = 480,
 
 def main():
     parser = argparse.ArgumentParser(description="Export trajectory (.npy) and optional simulation GIF from policy.")
-    parser.add_argument("--version", type=int, default=8, help="Model version directory under log/")
+    parser.add_argument("--exp_name", type=str, default="", help="log/<exp_name> 配下のcheckpointを使う")
+    parser.add_argument("--version", type=int, default=None, help="version_N の N (省略時は最新)")
     parser.add_argument("--model", type=str, default="best_params.pkl", help="Model checkpoint filename")
     parser.add_argument("--output", type=str, default=None, help="Output path for trajectory .npy file")
     parser.add_argument("--gif", type=str, default=None, help="Output path for simulation GIF (e.g. simulation.gif)")
@@ -90,30 +80,16 @@ def main():
         render_trajectory_to_gif(traj, gif_out)
         return
 
-    model_path = os.path.join(root_dir, "log", f"version_{args.version}", args.model)
-    if not os.path.exists(model_path):
-        model_path = os.path.join(root_dir, "log", "mjx_ppo_rma_100hz", f"version_{args.version}", args.model)
-    
+    model_path = find_checkpoint(args.exp_name, args.version, args.model)
+    if model_path is None:
+        print(f"エラー: checkpoint が見つかりません (exp_name={args.exp_name!r}, version={args.version}, model={args.model})")
+        return
     print(f"モデルをロード中: {model_path}")
     params = load_checkpoint(model_path)
-        
-    jax.config.update('jax_platform_name', 'cpu')
-    env = envs.get_environment('senpuu_maru_mjx')
-    
-    ppo_network = make_policy_network_factory(
-        observation_size=env.observation_size,
-        action_size=env.action_size,
-        preprocess_observations_fn=running_statistics.normalize,
-    )
-    make_policy = ppo_networks.make_inference_fn(ppo_network)
-    
-    def _strip_leading_dim(leaf):
-        if hasattr(leaf, "shape") and getattr(leaf, "ndim", 0) > 0 and leaf.shape[0] == 1:
-            return leaf.squeeze(0)
-        return leaf
 
-    params_stripped = jax.tree_util.tree_map(_strip_leading_dim, params)
-    policy = make_policy(params_stripped, deterministic=True)
+    jax.config.update('jax_platform_name', 'cpu')
+    env = SenpuuMaruMJXEnv()
+    policy = jax.jit(make_inference_fn_from_params(params, deterministic=True))
     
     jit_reset = jax.jit(env.reset)
     jit_step = jax.jit(env.step)

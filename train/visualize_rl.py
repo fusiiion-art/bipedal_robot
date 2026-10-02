@@ -17,25 +17,10 @@ if "--mode" in sys.argv:
     if len(sys.argv) > _mode_i + 1 and sys.argv[_mode_i + 1] == "video":
         os.environ.setdefault("MUJOCO_GL", "egl")
 
-import pickle
 import time
-import enum
 import argparse
 import numpy as np
 from pathlib import Path
-
-# NumPy compatibility helpers (古いnumpy pickleとの互換用。現行環境では
-# 基本的に素通りするが、他環境で保存された古いcheckpointの読み込みに備えて残す)
-_old_np_asarray = np.asarray
-
-def _compat_numpy_asarray(a, dtype=None, order=None, copy=True, subok=False, **kwargs):
-    try:
-        return _old_np_asarray(a, dtype=dtype, order=order, copy=copy, subok=subok)
-    except TypeError:
-        return _old_np_asarray(a, dtype=dtype, order=order)
-
-np.asarray = _compat_numpy_asarray
-
 
 # JAXヘッドレス化防止・CPU/EGL選択
 # Viewer画面表示時はNative MuJoCo Viewerを起動
@@ -48,23 +33,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.append(str(REPO_ROOT))
 
 from robot.config import RobotConfig
-from robot.policy_network import make_policy_network_factory
+from robot.policy_network import find_checkpoint, load_checkpoint, make_inference_fn_from_params
 from envs.mjx_env import SenpuuMaruMJXEnv
-from brax.training.acme import running_statistics
-from brax.training.agents.ppo import networks as ppo_networks
-
-if not hasattr(running_statistics, "NormalizationMode"):
-    class NormalizationMode(enum.IntEnum):
-        NONE = 0
-    running_statistics.NormalizationMode = NormalizationMode
-
-
-class CompatibilityUnpickler(pickle.Unpickler):
-    def find_class(self, module, name):
-        if module.startswith("numpy._core"):
-            module = module.replace("numpy._core", "numpy.core")
-        return super().find_class(module, name)
-
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Unified MJX replay entrypoint")
@@ -84,54 +54,8 @@ def parse_args():
     return parser.parse_args()
 
 
-def get_model_path(exp_name: str, version: int | None, model_name: str) -> Path | None:
-    root = REPO_ROOT / "log"
-    if exp_name:
-        root = root / exp_name
-    if not root.exists():
-        return None
-    if version is not None:
-        candidate = root / f"version_{version}" / model_name
-        return candidate if candidate.exists() else None
-    versions = sorted([d for d in root.glob("version_*") if d.is_dir()], key=lambda x: int(x.name.split("_")[-1]))
-    for v in reversed(versions):
-        candidate = v / model_name
-        if candidate.exists():
-            return candidate
-    return None
-
-
-def load_checkpoint(path: Path):
-    with open(path, "rb") as f:
-        return CompatibilityUnpickler(f).load()
-
-
-def build_inference_fn(params, env):
-    # [2026-09-25 修正] train_mjx.py は ppo.train(normalize_observations=True, ...)
-    # で学習しており、Brax内部で
-    #   ppo_network = network_factory(obs_shape, action_size,
-    #                                  preprocess_observations_fn=running_statistics.normalize)
-    # として観測正規化込みでネットワークを構築している(brax/training/agents/ppo/train.py
-    # で実際に確認済み)。ここで preprocess_observations_fn を指定せず(デフォルト=恒等関数)
-    # ネットワークを組むと、学習時に正規化された分布を前提に訓練された方策へ
-    # 生の(正規化されていない)観測をそのまま入力することになり、
-    # 出力する行動が実質デタラメになる
-    # (=可視化すると倒れる/暴れる、という「学習は成功しているのに再生だけ失敗する」
-    #  典型パターン)。running_statistics.normalize を明示的に渡して整合させる。
-    ppo_network = make_policy_network_factory(
-        env.observation_size, env.action_size,
-        preprocess_observations_fn=running_statistics.normalize,
-    )
-    inference_fn = ppo_networks.make_inference_fn(ppo_network)
-    
-    # Strip leading pmap dimension from params (tuple: running_stats, policy_params, value_params)
-    def _strip_leading_dim(leaf):
-        if hasattr(leaf, "shape") and getattr(leaf, "ndim", 0) > 0 and leaf.shape[0] == 1:
-            return leaf.squeeze(0)
-        return leaf
-    
-    params_stripped = jax.tree_util.tree_map(_strip_leading_dim, params)
-    return jax.jit(inference_fn(params_stripped, deterministic=True))
+def build_inference_fn(params):
+    return jax.jit(make_inference_fn_from_params(params, deterministic=True))
 
 
 def apply_visual_push(state, args, step: int):
@@ -185,7 +109,7 @@ def apply_mouse_perturbation(state, model, data, viewer, dt: float):
 
 def run_interactive(params, args):
     env = SenpuuMaruMJXEnv()
-    inference_fn = build_inference_fn(params, env)
+    inference_fn = build_inference_fn(params)
 
     model = mujoco.MjModel.from_xml_path(str(RobotConfig.MUJOCO_MODEL_PATH))
     data = mujoco.MjData(model)
@@ -235,7 +159,7 @@ def run_interactive(params, args):
 def render_video(params, args):
     steps, output = args.steps, args.output
     env = SenpuuMaruMJXEnv()
-    inference_fn = build_inference_fn(params, env)
+    inference_fn = build_inference_fn(params)
 
     model = mujoco.MjModel.from_xml_path(str(RobotConfig.MUJOCO_MODEL_PATH))
     data = mujoco.MjData(model)
@@ -291,7 +215,7 @@ def render_plot(params, args):
 
     steps, output = args.steps, args.output
     env = SenpuuMaruMJXEnv()
-    inference_fn = build_inference_fn(params, env)
+    inference_fn = build_inference_fn(params)
 
     rng = jax.random.PRNGKey(0)
     reset_fn = jax.jit(env.reset)
@@ -358,7 +282,7 @@ def render_plot(params, args):
 
 def main():
     args = parse_args()
-    model_path = get_model_path(args.exp_name, args.version, args.model)
+    model_path = find_checkpoint(args.exp_name, args.version, args.model)
     if model_path is None:
         print(f"Error: model file not found for exp_name={args.exp_name}, version={args.version}, model={args.model}")
         return

@@ -103,12 +103,13 @@ def test_episode_info_reset_restores_all_info_obs_and_pipeline_state():
         want = np.asarray(fresh_value)[0].astype(np.float64)
         np.testing.assert_allclose(got, want, atol=1e-5, err_msg=f"info[{key!r}] was not reset")
 
-    np.testing.assert_allclose(np.asarray(state.obs)[0], np.asarray(fresh.obs)[0], atol=1e-5)
+    for key in fresh.obs:
+        np.testing.assert_allclose(np.asarray(state.obs[key])[0], np.asarray(fresh.obs[key])[0], atol=1e-5)
     np.testing.assert_allclose(
         np.asarray(state.pipeline_state.qpos)[0], np.asarray(fresh.pipeline_state.qpos)[0], atol=1e-6
     )
     # obs 末尾のサーボ温度・電圧が info の値と一致すること(旧実装は最初のepisodeの値だった)
-    obs0 = np.asarray(state.obs)[0]
+    obs0 = np.asarray(state.obs["state"])[0]
     np.testing.assert_allclose(obs0[-21:-1], np.asarray(state.info["servo_temp"])[0], atol=1e-5)
     np.testing.assert_allclose(obs0[-1], np.asarray(state.info["supply_volt"])[0], atol=1e-5)
     # done でないスロットは継続していること
@@ -210,9 +211,8 @@ class _DummyData:
 def _compute(reward_system, data, last_potential):
     return reward_system.compute(
         data, action=jp.zeros(6), last_action=jp.zeros(6),
-        double_last_action=jp.zeros(6), triple_last_action=jp.zeros(6),
         cbf_penalty=jp.array(0.0), last_potential=jp.array(last_potential),
-        step=jp.array(10), reference_action=jp.zeros(6),
+        step=jp.array(10),
         servo_temp=jp.full(6, 40.0), supply_volt=11.1,
         training_progress=jp.array(1.0),
     )

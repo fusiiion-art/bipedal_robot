@@ -29,7 +29,7 @@ Brax PPO では num_envs 個の並列環境が同期的に実行されるため�
 各環境の progress を独立に計算する必要がある。
 
 実装:
-  - state.obs.shape[0] で num_envs を検出
+  - state.done.shape で num_envs を検出 (obs は dict のため使わない)
   - _env_steps, training_progress を (num_envs,) 配列として管理
   - mjx_rewards.py 側の _get_curriculum_disturbance_scale() は
     要素ごとのスケーリングに対応
@@ -84,8 +84,7 @@ class TrainingProgressWrapper(Wrapper):
     def reset(self, rng):
         state = self.env.reset(rng)
         
-        # [ISSUE-2 FIXED] batch 対応: num_envs を検出
-        batch_size = state.obs.shape[0] if state.obs.ndim > 1 else 1
+        batch_size = _batch_size(state)
         
         if self._fixed_progress is None:
             initial_progress = jp.zeros(batch_size, dtype=jp.float32)
@@ -97,7 +96,6 @@ class TrainingProgressWrapper(Wrapper):
         state = state.replace(info={
             **state.info,
             '_env_steps': jp.zeros(batch_size, dtype=jp.int32),
-            'global_step': jp.zeros(batch_size, dtype=jp.int32),
             'training_progress': initial_progress,
             'terminated': jp.zeros(batch_size, dtype=jp.bool_),
             'truncated': jp.zeros(batch_size, dtype=jp.bool_),
@@ -110,13 +108,7 @@ class TrainingProgressWrapper(Wrapper):
         #                     現在のカウンタを取得して +1
         #                     batch-wise インクリメント
         
-        env_steps_current = state.info.get('_env_steps', None)
-        if env_steps_current is None:
-            # フォールバック: 0 初期化（reset() が呼ばれていない場合）
-            batch_size = state.obs.shape[0] if state.obs.ndim > 1 else 1
-            env_steps_current = jp.zeros(batch_size, dtype=jp.int32)
-        
-        env_steps = jp.asarray(env_steps_current, dtype=jp.int32) + 1
+        env_steps = jp.asarray(state.info['_env_steps'], dtype=jp.int32) + 1
         
         if self._fixed_progress is None:
             progress = jp.clip(
@@ -140,11 +132,14 @@ class TrainingProgressWrapper(Wrapper):
         state = state.replace(info={
             **state.info,
             '_env_steps': env_steps,
-            'global_step': env_steps,
             'training_progress': progress,
         })
         
         return state
+
+
+def _batch_size(state) -> int:
+    return state.done.shape[0] if state.done.ndim > 0 else 1
 
 
 class EpisodeInfoResetWrapper(Wrapper):
@@ -172,17 +167,17 @@ class EpisodeInfoResetWrapper(Wrapper):
 
     # エピソード境界を跨いで持ち越すキー:
     #   rng_key: 乱数系列は env ごとに継続させる(リセットすると系列が巻き戻る)
-    #   _env_steps/global_step/training_progress: TrainingProgressWrapper が管理する学習全体のカウンタ
+    #   _env_steps/training_progress: TrainingProgressWrapper が管理する学習全体のカウンタ
     #   terminated/truncated/time_out: このstep(=終了したepisodeの最終遷移)の終了種別。
     #     Brax PPO は戻り値stateの info['time_out'] を当該遷移の extras として読むため、
     #     ここでリセットすると bootstrap_on_timeout が効かなくなる。
     PRESERVED_KEYS = frozenset({
-        "rng_key", "_env_steps", "global_step", "training_progress",
+        "rng_key", "_env_steps", "training_progress",
         "terminated", "truncated", "time_out",
     })
 
     def step(self, state, action):
-        is_batched = state.obs.ndim > 1
+        is_batched = state.done.ndim > 0
         if is_batched:
             keys = jax.vmap(jax.random.split)(state.info["rng_key"])
             rng_for_fresh = keys[:, 0]

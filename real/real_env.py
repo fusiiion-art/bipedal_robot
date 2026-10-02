@@ -24,9 +24,8 @@ except ImportError:
     ort = None
 
 from real.real_io import TeensySpineIO
-from robot.math_utils import quat_to_euler, rotate_vector_by_quaternion
+from robot.math_utils import projected_gravity_numpy, rotate_vector_by_quaternion
 from robot.config import RobotConfig
-from robot.gait_generator import numpy_get_reference_trajectory
 
 
 # ============================================================
@@ -96,7 +95,7 @@ class RealRobotEnv:
     1. センサー取得 (共有メモリ or 直接)
     2. 625次元観測ベクトルの構築
     3. ONNX推論 (Base Policy, シングルスレッド)
-    4. 残差RL合成 (サイクロイド・リファレンス + AI残差)
+    4. 残差合成 (中腰デフォルト姿勢 + AI残差)
     5. 安全クランプ + EMA平滑化
     6. Sync Write一括送信
     7. インターリーブRead (2台/ループ)
@@ -109,8 +108,7 @@ class RealRobotEnv:
     ACT_DIM = RobotConfig.ACT_DIM
     OBS_DIM = RobotConfig.OBS_DIM
     ACTION_SCALE = RobotConfig.ACTION_SCALE
-    RESIDUAL_SCALE = 0.5
-    EMA_ALPHA = 0.8      # LPF平滑化係数
+    EMA_ALPHA = RobotConfig.MOTOR_LPF_ALPHA  # LPF平滑化係数 (学習側と同じ値)
     
     # 各関節の物理的可動限界 (assets/humanoid/humanoid.xml と 100% 完全同期)
     JOINT_LIMITS_MIN = np.array([
@@ -156,67 +154,52 @@ class RealRobotEnv:
         self._vel_estimate = np.zeros(3)           # IMU積分速度 [m/s]
         self._prev_joint_pos = np.zeros(self.NUM_JOINTS)  # 関節角速度の有限差分用
         
-        # [REAL-1 FIXED] 位相計算を相対ステップベース（学習側と同期）
         self._episode_step = 0
         self._max_episode_steps = RobotConfig.MAX_EPISODE_STEPS
-        
-        # 履歴バッファ (FIFO: 過去5ステップ)
-        # [REAL-3 FIXED] 順序を mjx_env の jp.roll(shift=-1) と一致させる
-        # (古 → 新の順序：0番目=最も古い, 4番目=最新)
-        self.obs_history = deque(
-            [np.zeros(self.BASE_OBS_DIM) for _ in range(self.HISTORY_LEN)],
-            maxlen=self.HISTORY_LEN
-        )
-        self.act_history = deque(
-            [np.zeros(self.ACT_DIM) for _ in range(self.HISTORY_LEN)],
-            maxlen=self.HISTORY_LEN
-        )
-        
+
+        # BNO055 の取り付け姿勢 (センサー座標系 → 胴体座標系)。学習側の観測は胴体座標系。
+        self._imu_mount_quat = np.asarray(RobotConfig.IMU_MOUNT_QUAT, dtype=np.float64)
+
+        # 履歴バッファ (古 → 新、mjx_env の jp.roll(shift=-1) と同じ向き)。
+        # 中身は reset_episode() 後の最初の観測で埋める。
+        self.obs_history = deque(maxlen=self.HISTORY_LEN)
+        self.act_history = deque(maxlen=self.HISTORY_LEN)
+        self._history_needs_fill = True
+
         print(f"[Info] RealRobotEnv ready. Control loop: {control_hz}Hz ({self.dt*1000:.1f}ms)")
-    
+
+    def _measured_joint_positions(self) -> np.ndarray:
+        positions = getattr(self.spine, 'servo_positions', None)
+        if positions is not None and np.any(np.asarray(positions) != 0):
+            return np.asarray(positions, dtype=np.float64).copy()
+        return np.asarray(RobotConfig.DEFAULT_JOINT_ANGLES, dtype=np.float64).copy()
+
     def reset_episode(self):
-        """エピソード開始時のリセット（学習シミュレータの reset() に対応）"""
+        """エピソード開始時のリセット（学習シミュレータの reset() に対応）。
+
+        学習側と同じく、指令系(LPF状態・前回指令・指令履歴)は現在の実関節角で初期化し、
+        観測履歴は最初の観測で埋める。[2026-10-02 FIX] 旧実装は smoothed_action を 0rad で
+        初期化しており、最初の指令が「全関節0rad方向へ80%」という急激な動きになっていた。
+        """
         self._episode_step = 0
-        # 履歴バッファをクリア
-        for _ in range(self.HISTORY_LEN):
-            self.obs_history.append(np.zeros(self.BASE_OBS_DIM))
-            self.act_history.append(np.zeros(self.ACT_DIM))
-    
-    def _compute_gait_phase(self) -> float:
-        """
-        学習時と同じ位相観測を返す。
-        
-        [REAL-1 FIXED] 相対時刻ベース（ステップ数）に統一。
-        絶対時刻 time.monotonic() ではなく、エピソード内ステップ数
-        (_episode_step) を使用することで、学習環境 mjx_env と
-        完全に同期する。
-        
-        Fixed-foot mode では常に 0 を返す。
-        """
-        if not RobotConfig.USE_REFERENCE_GAIT:
-            return 0.0
-        
-        # [REAL-1 FIXED] ステップ数ベース（学習環境 mjx_env L188 と同一ロジック）
-        phase = (self._episode_step * self.dt / RobotConfig.GAIT_PERIOD) % 1.0
-        return float(phase)
-    
-    def _get_reference_trajectory(self, phase: float) -> np.ndarray:
-        """
-        サイクロイド・リファレンス軌道 (gait_generator.py のロジック実機NumPy共通版)。
-        学習環境の jax_get_reference_trajectory と 100% 完全な整合性を担保。
-        """
-        return numpy_get_reference_trajectory(phase, self.NUM_JOINTS)
+        joint_pos = self._measured_joint_positions()
+        self.smoothed_action = joint_pos.copy()
+        self.last_action = joint_pos.copy()
+        self._prev_joint_pos = joint_pos.copy()
+        self.obs_history.clear()
+        self.act_history.clear()
+        self._history_needs_fill = True
     
     def build_observation(self) -> np.ndarray:
         """
         625次元観測ベクトルの構築 (project_overview.md 仕様に完全準拠)
         
-        BASE_OBS (84次元):
-          位置(3) + RPY(3) + 線速度(3) + 角速度(3) = 12
+        BASE_OBS (84次元, envs/mjx_env.py の _get_obs() と同じ順序):
+          位置(3, 常に0) + 重力射影(3) + 線速度(3) + 角速度(3) = 12
           関節角度(20) + 関節角速度(20) = 40
-          FSR(8) + ZMP(2) = 10
-          phase_sin(1) + phase_cos(1) = 2
-          リファレンス角度(20) = 20
+          FSR接地フラグ(8) + ZMP(2, 常に0) = 10
+          phase_sin(1, 常に0) + phase_cos(1, 常に1) = 2
+          リファレンス角度(20, 常に0) = 20
         
         + 観測履歴 (84×5 = 420)
         + 行動履歴 (20×5 = 100)
@@ -226,16 +209,14 @@ class RealRobotEnv:
         # --- 1. IMU (UART経由, ブロッキングなし) ---
         imu_data = self.imu_data
         quat = imu_data["quat"]
-        gyro = imu_data["gyro"]
         lin_accel = imu_data["lin_accel"]
-        rpy = quat_to_euler(quat)  # roll, pitch, yaw
+        # 姿勢は胴体座標系の重力射影ベクトル (ヨー=磁北基準の絶対方位を含まない)。
+        # センサー座標系の値を取り付け姿勢で胴体座標系へ回転する (学習側は胴体座標系)。
+        gravity = rotate_vector_by_quaternion(projected_gravity_numpy(quat), self._imu_mount_quat)
+        gyro = rotate_vector_by_quaternion(np.asarray(imu_data["gyro"], dtype=np.float64), self._imu_mount_quat)
         
-        # --- [REAL-2 FIXED] base_pos: 高さ(Z)のみ脚IKから粗推定予定、X/Yはゼロ ---
-        # 学習側で NOISE_BASE_POS=0.1m の大ノイズDR済みのため
-        # 実機側はゼロ埋めでも破綻しない設計。脚IK実装予定。
+        # --- base_pos: 実機では取得できないため常に0 (学習側の観測も常に0) ---
         base_pos = np.zeros(3)
-        # base_pos[2] は将来的に脚のIKから推定可能:
-        #   z_est ≈ L_thigh * cos(knee_angle) + L_shin * cos(ankle_angle)
         
         # --- lin_vel: ZUPT (Zero-velocity Update) 推定 ---
         # IMU加速度を1ステップ積分して速度を推定し、
@@ -268,41 +249,30 @@ class RealRobotEnv:
         joint_vel = (joint_pos - self._prev_joint_pos) / self.dt
         self._prev_joint_pos = joint_pos.copy()
         
-        # --- 4. 歩行位相 ---
-        phase = self._compute_gait_phase()
-        phase_obs = np.array([np.sin(2 * np.pi * phase), np.cos(2 * np.pi * phase)])
-        
-        # --- 5. リファレンス軌道 ---
-        ref_angles = self._get_reference_trajectory(phase)
-        
-        # お手本無しのとき、観測のお手本情報(ref_angles)を0にリセットして、AIから目標の軌跡を完全に隠す
-        # これにより、ロボットは自身の状態のみを頼りに歩行する（ただし、全体の次元数は変えないため、デプロイメント契約は壊れない）
-        if not RobotConfig.USE_REFERENCE_GAIT:
-            ref_angles_obs = np.zeros_like(ref_angles)
-        else:
-            ref_angles_obs = ref_angles
-        
-        # --- 6. Base Obs (84次元) ---
+        # --- 4. Base Obs (84次元) ---
         base_obs = np.concatenate([
-            base_pos,        # 3
-            rpy,             # 3
-            lin_vel,         # 3 (ZUPT推定速度)
-            gyro,            # 3
-            joint_pos,       # 20
-            joint_vel,       # 20
-            fsr_raw,         # 8
-            zmp_xy,          # 2
-            phase_obs,       # 2
-            ref_angles_obs   # 20
+            base_pos,                  # 3 (常に0)
+            gravity,                   # 3
+            lin_vel,                   # 3 (ZUPT推定速度)
+            gyro,                      # 3
+            joint_pos,                 # 20
+            joint_vel,                 # 20
+            fsr_raw,                   # 8 (0/1)
+            zmp_xy,                    # 2 (常に0)
+            np.array([0.0, 1.0]),      # 2 位相 [sin, cos] (立位タスクでは常に位相0)
+            np.zeros(self.NUM_JOINTS), # 20 参照角 (立位タスクでは常に0)
         ])  # 合計: 84
-        
-        # [REAL-3 FIXED] 履歴バッファ更新（順序をmjx_env と明示的に一致）
-        # mjx_env L173: obs_hist = jp.roll(obs_hist, shift=-1, axis=0)
-        #               obs_hist = obs_hist.at[-1].set(base_obs)
-        # つまり：[古い→新しい] の順序で、新データが末尾に追加される
-        # NumPy deque も FIFO (古→新) なので、append() で自動的に同期する
-        self.obs_history.append(base_obs.copy())
-        self.act_history.append(self.last_action.copy())
+
+        # 履歴バッファ更新 ([古い→新しい] の順、新データを末尾に追加)。
+        # エピソード最初の観測では、学習側と同じく全スロットをその観測・現在の指令で埋める。
+        if self._history_needs_fill:
+            for _ in range(self.HISTORY_LEN):
+                self.obs_history.append(base_obs.copy())
+                self.act_history.append(self.last_action.copy())
+            self._history_needs_fill = False
+        else:
+            self.obs_history.append(base_obs.copy())
+            self.act_history.append(self.last_action.copy())
         
         obs_hist_flat = np.concatenate(list(self.obs_history))   # 84×5 = 420
         act_hist_flat = np.concatenate(list(self.act_history))   # 20×5 = 100
@@ -334,11 +304,7 @@ class RealRobotEnv:
         return obs
     
     def step(self, obs: np.ndarray) -> np.ndarray:
-        """
-        1ステップの推論→行動適用。
-        
-        USE_REFERENCE_GAIT が True の場合は残差強化学習、False の場合はお手本無しのダイレクト強化学習を実行。
-        """
+        """1ステップの推論→行動適用 (中腰デフォルト姿勢 + AI残差)。"""
         # --- AI推論 ---
         raw_action = self.policy.infer(obs)
         
@@ -347,17 +313,9 @@ class RealRobotEnv:
             print("[Error] NaN/Inf detected in Policy Output! Triggering software E-stop (Zero Action).")
             raw_action = np.zeros_like(raw_action)
         
-        # --- アクションの合成 (USE_REFERENCE_GAITスイッチによるダイレクト/残差の切り替え) ---
-        if RobotConfig.USE_REFERENCE_GAIT:
-            # AIの出力は「残差」として扱う（元の最大50%に制限）
-            phase = self._compute_gait_phase()
-            ref_angles = self._get_reference_trajectory(phase)
-            residual = raw_action * self.ACTION_SCALE * self.RESIDUAL_SCALE
-            target = ref_angles + residual
-        else:
-            # 「お手本無し」の場合：AIの出力を、安定した「中腰立ち姿勢」からの直接変位（最大±90度）として解釈
-            default_pose = np.array(RobotConfig.DEFAULT_JOINT_ANGLES)
-            target = default_pose + raw_action * self.ACTION_SCALE
+        # --- アクションの合成: 中腰立ち姿勢からの残差 (最大 ±ACTION_SCALE) ---
+        default_pose = np.array(RobotConfig.DEFAULT_JOINT_ANGLES)
+        target = default_pose + raw_action * self.ACTION_SCALE
         
         # --- 安全クランプ (assets/humanoid/humanoid.xml と 100% 同期した個別限界) ---
         target = np.clip(target, self.JOINT_LIMITS_MIN, self.JOINT_LIMITS_MAX)

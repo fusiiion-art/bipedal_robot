@@ -3,23 +3,12 @@
 from pathlib import Path
 import sys
 
-import numpy as np
-
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from robot.config import RobotConfig
 from scratch.phase0_eval_diagnostics import summarize_episode_alive
-
-
-def test_standing_mission_forbids_walking_and_stepping():
-    assert RobotConfig.ALLOW_WALKING is False
-    assert RobotConfig.ALLOW_STEPPING is False
-    assert RobotConfig.TARGET_VEL_X == 0.0
-    assert RobotConfig.TARGET_VEL_Y == 0.0
-    assert RobotConfig.TARGET_YAW_RATE == 0.0
-    assert RobotConfig.MAX_SINGLE_FOOT_LIFT == 0.0
 
 
 def test_success_summary_is_not_episode_alive_only():

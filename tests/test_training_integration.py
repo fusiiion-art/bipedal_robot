@@ -41,7 +41,7 @@ def test_vmap_reset_then_step_no_crash():
     action = jp.zeros((4, env.action_size))
     state = step_fn(state, action)  # UnexpectedTracerErrorが出ないこと
     assert state is not None
-    assert state.obs.shape[0] == 4
+    assert state.obs["state"].shape[0] == 4
 
 
 def test_domain_randomization_differs_per_env_under_vmap():
@@ -55,7 +55,7 @@ def test_domain_randomization_differs_per_env_under_vmap():
     assert len(unique_scales) > 1, f"Expected varied mass scales across envs, got {unique_scales}"
 
 
-def _assert_episode_info_reset_on_done_step(state, initial_cmd, reset_slot, other_slots):
+def _assert_episode_info_reset_on_done_step(state, env, reset_slot, other_slots):
     steps = np.asarray(state.info["step"])
     done = np.asarray(state.done)
     assert done[reset_slot] == 1.0 and np.all(done[other_slots] == 0.0), done
@@ -64,8 +64,10 @@ def _assert_episode_info_reset_on_done_step(state, initial_cmd, reset_slot, othe
     # 指令履歴のまま実行される)。
     assert steps[reset_slot] == 0, f"Expected slot {reset_slot} to reset to 0, got {steps[reset_slot]}"
     assert np.all(steps[other_slots] == 2), f"Expected other slots to advance to 2, got {steps[other_slots]}"
+    # 新episodeの指令系は、そのepisodeのspawn関節角(初期状態分布からの新しいサンプル)で初期化される
     filtered = np.asarray(state.info["filtered_action"])
-    assert np.allclose(filtered[reset_slot], initial_cmd[reset_slot])
+    spawn_joints = np.asarray(state.pipeline_state.qpos)[:, np.asarray(env._actuator_to_qpos_idx)]
+    assert np.allclose(filtered[reset_slot], spawn_joints[reset_slot], atol=1e-6)
 
 
 def test_auto_reset_resets_episode_scoped_info():
@@ -82,7 +84,6 @@ def test_auto_reset_resets_episode_scoped_info():
     num_envs = 2
     keys = jax.random.split(jax.random.PRNGKey(0), num_envs)
     state = reset_fn(keys)
-    initial_cmd = np.asarray(state.info["filtered_action"])
 
     # 初期状態
     initial_steps = np.asarray(state.info["step"])
@@ -98,7 +99,7 @@ def test_auto_reset_resets_episode_scoped_info():
     # time limit(episode_length=2)によるdoneを発生させる
     state.info["steps"] = jp.array([1.0, 0.0])
     state = step_fn(state, action)
-    _assert_episode_info_reset_on_done_step(state, initial_cmd, reset_slot=0, other_slots=[1])
+    _assert_episode_info_reset_on_done_step(state, env, reset_slot=0, other_slots=[1])
 
 
 def test_auto_reset_resets_episode_scoped_info_batched():
@@ -113,7 +114,6 @@ def test_auto_reset_resets_episode_scoped_info_batched():
     step_fn = jax.jit(wrapped.step)
     keys = jax.random.split(jax.random.PRNGKey(42), num_envs)
     state = jax.jit(wrapped.reset)(keys)
-    initial_cmd = np.asarray(state.info["filtered_action"])
 
     action = jp.zeros((num_envs, env.action_size))
     state = step_fn(state, action)
@@ -122,5 +122,5 @@ def test_auto_reset_resets_episode_scoped_info_batched():
     # スロット0のみtime limitでdoneにする
     state.info["steps"] = jp.array([1.0, 0.0, 0.0, 0.0])
     state = step_fn(state, action)
-    _assert_episode_info_reset_on_done_step(state, initial_cmd, reset_slot=0, other_slots=[1, 2, 3])
+    _assert_episode_info_reset_on_done_step(state, env, reset_slot=0, other_slots=[1, 2, 3])
 

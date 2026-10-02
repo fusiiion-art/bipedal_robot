@@ -54,11 +54,28 @@ v2.2 (2026-09 レビュー: JAX/Braxバッチ次元誤解の修正と足裏基�
 ================================================================================
 """
 
+def curriculum_disturbance_scale(training_progress: jax.Array) -> jax.Array:
+    """学習進捗率(0→1)に応じた外乱強度スケール (RobotConfig.CURRICULUM_SCHEDULE_FRACTIONS)。"""
+    schedule = RobotConfig.CURRICULUM_SCHEDULE_FRACTIONS
+    scale = jp.array(0.0, dtype=jp.float32)
+    for key in sorted(schedule):
+        scale = jp.where(training_progress >= key, jp.array(schedule[key], dtype=jp.float32), scale)
+    return jp.clip(scale, 0.0, 1.0)
+
+
 class MJXRewardSystem:
+    # compute() が返す metrics のキー (reset() 時の metrics と pytree 構造を一致させるため公開する)
+    METRIC_KEYS = (
+        'alive', 'total_reward', 'reward', 'total_penalty', 'lambda_phase',
+        'r_cp', 'r_recovery', 'r_com_stab', 'r_upright', 'both_feet_contact',
+        'pbrs_reward', 'potential', 'fall_penalty', 'stability_index',
+        'curriculum_scale', 'disturbance_recovery_bonus', 'zmp_margin',
+        'foot_balance', 'barrier_height', 'barrier_torque', 'reward_is_finite',
+        'stability_metrics_finite',
+    )
+
     def __init__(self, model: mjx.Model, weights: dict, left_foot_id: int, right_foot_id: int):
         self._model = model
-        self._nq = model.nq
-        self._nu = model.nu
         self._weights = weights
         self._left_foot_id = left_foot_id
         self._right_foot_id = right_foot_id
@@ -80,13 +97,8 @@ class MJXRewardSystem:
         )
 
     def compute_potential(self, data: mjx.Data, lambda_phase: jax.Array = None) -> jax.Array:
-        if self._nq >= 7:
-            base_pos = data.qpos[0:3]
-            base_quat = data.qpos[3:7]
-            rpy = quat_to_euler(base_quat)
-        else:
-            base_pos = jp.zeros(3)
-            rpy = jp.zeros(3)
+        base_pos = data.qpos[0:3]
+        rpy = quat_to_euler(data.qpos[3:7])
 
         gravity_projection = jp.cos(rpy[0]) * jp.cos(rpy[1])
         p_upright = jp.exp(-5.0 * (1.0 - gravity_projection))
@@ -98,19 +110,6 @@ class MJXRewardSystem:
         w = self._weights
         lp = 1.0 if lambda_phase is None else lambda_phase
         return p_upright * w['upright'] + p_target * w['target_pose'] * lp
-
-    def _get_curriculum_disturbance_scale(self, training_progress: jax.Array) -> jax.Array:
-        """
-        カリキュラム学習: 学習進捗率(スカラー)に応じて外乱強度を段階的に増加。
-        """
-        schedule = RobotConfig.CURRICULUM_SCHEDULE_FRACTIONS
-        keys = sorted(schedule.keys())
-
-        scale = jp.array(schedule[keys[0]], dtype=jp.float32)
-        for key in keys:
-            scale = jp.where(training_progress >= key, jp.array(schedule[key], dtype=jp.float32), scale)
-
-        return jp.clip(scale, 0.0, 1.0)
 
     def _compute_adaptive_reward_scaling(self, servo_temp: jax.Array, supply_volt: float) -> Dict[str, jax.Array]:
         max_servo_temp = jp.max(servo_temp)
@@ -205,77 +204,40 @@ class MJXRewardSystem:
         data: mjx.Data,
         action: jax.Array,
         last_action: jax.Array,
-        double_last_action: jax.Array,
-        triple_last_action: jax.Array,
         cbf_penalty: jax.Array,
         last_potential: jax.Array,
         step: jax.Array,
-        reference_action: jax.Array,
-        servo_temp: jax.Array = None,
-        supply_volt: float = 11.1,
-        global_step: jax.Array = None,
-        gait_phase: float = 0.0,
+        servo_temp: jax.Array,
+        supply_volt: jax.Array,
         was_disturbed: jax.Array = None,
         disturbance_recovery_steps: jax.Array = None,
         training_progress: jax.Array = None,
     ) -> Tuple[jax.Array, jax.Array, Dict[str, jax.Array], jax.Array]:
+        """1制御周期分の報酬・終了判定を計算する。
 
-        if global_step is None:
-            global_step = step
-        if servo_temp is None:
-            servo_temp = jp.zeros(self._nu)
+        Args:
+            action / last_action: 今回 / 前回 actuator に渡した目標関節角 [rad]
+            cbf_penalty: envs/cbf.py の compute_cbf_penalty() の値
+            last_potential: 前stepの PBRS ポテンシャル Φ(s)
+            step: エピソード内step数 (0始まり)
+            training_progress: 学習進捗率 [0,1]。None なら学習終了時と同じ扱い
+        """
         if was_disturbed is None:
             was_disturbed = jp.array(False)
         if disturbance_recovery_steps is None:
             disturbance_recovery_steps = jp.array(1000)
 
-        # --- 1. 状態抽出 ---
-        if self._nq >= 7:
-            base_pos = data.qpos[0:3]
-            base_quat = data.qpos[3:7]
-            base_lin_vel = data.qvel[0:3]
-            base_ang_vel = data.qvel[3:6]
-            rpy = quat_to_euler(base_quat)
-            torques = data.actuator_force
+        # --- 1. 状態抽出 (報酬は観測ノイズを含まない真値で計算する) ---
+        base_pos = data.qpos[0:3]
+        base_lin_vel = data.qvel[0:3]
+        base_ang_vel = data.qvel[3:6]
+        rpy = quat_to_euler(data.qpos[3:7])
+        torques = data.actuator_force
 
-            actuator_to_qpos = jp.array([
-                self._model.jnt_qposadr[self._model.actuator_trnid[i][0]]
-                for i in range(self._model.nu)
-            ], dtype=jp.int32)
-            actuator_to_qvel = jp.array([
-                self._model.jnt_dofadr[self._model.actuator_trnid[i][0]]
-                for i in range(self._model.nu)
-            ], dtype=jp.int32)
-            joint_pos = data.qpos[actuator_to_qpos]
-            joint_vel = data.qvel[actuator_to_qvel]
-        else:
-            base_pos = jp.zeros(3)
-            rpy = jp.zeros(3)
-            base_lin_vel = jp.zeros(3)
-            base_ang_vel = jp.zeros(3)
-            torques = jp.zeros(self._nu)
-            joint_pos = data.qpos
-            joint_vel = data.qvel
-
-        subtree_com = getattr(data, 'subtree_com', None)
-        com_pos = subtree_com[0] if subtree_com is not None else base_pos
-
-        base_qacc = getattr(data, 'qacc', None)
-        if base_qacc is not None and self._nq >= 7:
-            com_accel = base_qacc[0:3]
-            # [監査追加 2026-09-13] 通常経路(qacc取得成功)
-            com_accel_is_fallback = jp.array(0.0)
-        else:
-            com_accel = jp.array([0.0, 0.0, -9.81])
-            # [監査追加 2026-09-13] envs/stability_metrics.py のv2
-            # [CRITICAL FIX]で説明されている「zmp_marginが死んだ指標に
-            # なる」バグの片割れが、まさにこのフォールバック分岐だった
-            # (このcom_accelではXY成分が常に0になるため、ZMPが
-            # 重心位置に退化し、動的な不安定性を反映できなくなる)。
-            # 数式自体は修正済みだが、この分岐が本番で有効化されていないか
-            # train/train_mjx.py の _audit_reward_metrics() が
-            # 'com_accel_is_fallback' として監視する。
-            com_accel_is_fallback = jp.array(1.0)
+        subtree_com = data.subtree_com
+        com_pos = subtree_com[0]
+        # freejoint の並進加速度 (world frame)。胴体原点の加速度で全身重心の加速度を近似する。
+        com_accel = data.qacc[0:3]
 
         # --- 2. 足裏位置と相対高さの計算 (Contract Violation B 修正) ---
         left_foot_pos = data.xpos[self._left_foot_id]
@@ -285,9 +247,9 @@ class MJXRewardSystem:
         # 高さは足裏を基準とする（caveat契約遵守）
         relative_height = base_pos[2] - lowest_foot_z
 
-        # --- 3. カリキュラム学習による外乱スケーリング ---
-        tp = training_progress if training_progress is not None else jp.array(0.0)
-        curriculum_disturbance_scale = self._get_curriculum_disturbance_scale(tp)
+        # --- 3. カリキュラム学習による外乱スケーリング (ログ用) ---
+        tp = training_progress if training_progress is not None else jp.array(1.0)
+        curriculum_scale = curriculum_disturbance_scale(tp)
 
         # --- 4. λ_phase の計算 ---
         lw = getattr(RobotConfig, 'LAMBDA_PHASE_WEIGHTS', None) or {
@@ -320,19 +282,10 @@ class MJXRewardSystem:
         done = jp.logical_or(jp.logical_or(is_fallen_roll, is_fallen_pitch), is_low)
 
         # --- 6. 高度な安定性メトリクス計算 ---
-        has_sensors = data.sensordata.shape[0] > 0
         fsr_data = self.extract_fsr_sensor_data(self._model, data)
-        left_foot_force = jp.where(
-            has_sensors,
-            jp.clip(jp.mean(jp.abs(fsr_data[0:4] + 1e-6)), 0.0, 100.0),
-            0.5,
-        )
-        right_foot_force = jp.where(
-            has_sensors,
-            jp.clip(jp.mean(jp.abs(fsr_data[4:8] + 1e-6)), 0.0, 100.0),
-            0.5,
-        )
-        contact_threshold = getattr(RobotConfig, 'FOOT_CONTACT_THRESHOLD', 0.05)
+        left_foot_force = jp.clip(jp.mean(jp.abs(fsr_data[0:4] + 1e-6)), 0.0, 100.0)
+        right_foot_force = jp.clip(jp.mean(jp.abs(fsr_data[4:8] + 1e-6)), 0.0, 100.0)
+        contact_threshold = RobotConfig.FOOT_CONTACT_THRESHOLD
         both_feet_contact = jp.logical_and(
             left_foot_force > contact_threshold,
             right_foot_force > contact_threshold,
@@ -343,7 +296,6 @@ class MJXRewardSystem:
             com_pos, base_lin_vel, com_accel, rpy, base_ang_vel,
             left_foot_pos, right_foot_pos,
             left_foot_force, right_foot_force,
-            gait_phase=gait_phase,
             cp_margin_norm_dist=cp_margin_norm_dist,
         )
 
@@ -424,12 +376,6 @@ class MJXRewardSystem:
         foot_span = jp.linalg.norm(right_foot_pos[0:2] - left_foot_pos[0:2])
         stance_width_penalty = jp.clip(jp.maximum(0.0, foot_span - 0.16) * 20.0, 0.0, 20.0)
 
-        no_step_penalty = jp.where(
-            getattr(RobotConfig, 'ALLOW_WALKING', False) or getattr(RobotConfig, 'ALLOW_STEPPING', False),
-            100.0,
-            0.0,
-        )
-
         # 高さバリアは足裏基準の相対高さを使用
         h_margin = getattr(RobotConfig, 'BARRIER_HEIGHT_MARGIN', 0.05)
         h_clip = getattr(RobotConfig, 'BARRIER_HEIGHT_CLIP', 5.0)
@@ -474,11 +420,10 @@ class MJXRewardSystem:
             p_drift * w['drift'] +
             p_slip * w['slip'] * lambda_phase +
             stance_width_penalty * w.get('stance_width', 0.5) +
-            # [調査まとめ 項目4] step_penalty (0~20) と no_step_penalty (100) は、
-            # 固定足立位タスクにおいて歩行・ステップ動作を厳格に排除するための
-            # 強制ハードペナルティとして、REWARD_WEIGHTSを介さず実質重み1.0で直接加算している。
-            step_penalty +
-            no_step_penalty
+            # [調査まとめ 項目4] step_penalty (0~20) は、固定足立位タスクにおいて
+            # 踏み出し・移動を排除するための強制ハードペナルティとして、
+            # REWARD_WEIGHTSを介さず実質重み1.0で直接加算している。
+            step_penalty
         ) * penalty_scale
 
         safety_penalty = (
@@ -549,15 +494,12 @@ class MJXRewardSystem:
         terminal_reward = w['fall_penalty'] - safe_last_potential
         total_reward = jp.where(done, terminal_reward, total_reward)
 
-        safe_step = jp.maximum(step, 1).astype(jp.float32)
-        reward_per_step = total_reward
         total_penalty_value = soft_penalty + safety_penalty
 
         metrics = {
             'alive': r_alive,
             'total_reward': total_reward,
             'reward': total_reward,
-            'reward_per_step': reward_per_step,
             'total_penalty': total_penalty_value,
             'lambda_phase': lambda_phase,
             'r_cp': r_capture_point,
@@ -573,7 +515,7 @@ class MJXRewardSystem:
             'potential': current_potential,
             'fall_penalty': jp.where(done, w['fall_penalty'], 0.0),
             'stability_index': stability_index,
-            'curriculum_scale': curriculum_disturbance_scale,
+            'curriculum_scale': curriculum_scale,
             'disturbance_recovery_bonus': r_disturbance_recovery,
             'zmp_margin': stability_metrics['zmp_margin'],
             'foot_balance': stability_metrics['foot_balance'],
@@ -584,9 +526,6 @@ class MJXRewardSystem:
             # [監査追加 2026-09-13] envs/stability_metrics.py の幾何計算
             # 自体の非有限値検出フラグ (同ファイルのv2.2changelog参照)。
             'stability_metrics_finite': stability_metrics['metrics_are_finite'],
-            # [監査追加 2026-09-13] com_accelがqacc取得失敗によるフォール
-            # バック値[0,0,-9.81]を使っているか (1.0=フォールバック中)。
-            'com_accel_is_fallback': com_accel_is_fallback,
         }
 
         return total_reward, done, metrics, current_potential

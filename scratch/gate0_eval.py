@@ -155,32 +155,15 @@ def evaluate_mjx(
 def _load_policy(exp_name, version, model_name, env):
     """学習済みcheckpointからpolicyを読み込む。"""
     import jax
-    from train.visualize_rl import load_checkpoint, get_model_path
-    from robot.policy_network import make_policy_network_factory
-    from brax.training.agents.ppo import networks as ppo_networks
-    from brax.training.acme import running_statistics
+    from robot.policy_network import find_checkpoint, load_checkpoint, make_inference_fn_from_params
 
-    model_path = get_model_path(exp_name, version, model_name)
+    model_path = find_checkpoint(exp_name, version, model_name)
     if model_path is None:
         raise RuntimeError(f"Checkpoint not found for exp_name={exp_name}, version={version}")
 
     print(f"[Gate0] Loading checkpoint: {model_path}")
     params = load_checkpoint(model_path)
-
-    network = make_policy_network_factory(
-        env.observation_size,
-        env.action_size,
-        preprocess_observations_fn=running_statistics.normalize,
-    )
-    make_policy = ppo_networks.make_inference_fn(network)
-
-    def strip_leading_dim(leaf):
-        if hasattr(leaf, "shape") and getattr(leaf, "ndim", 0) > 0 and leaf.shape[0] == 1:
-            return leaf.squeeze(0)
-        return leaf
-
-    params_stripped = jax.tree_util.tree_map(strip_leading_dim, params)
-    return jax.jit(make_policy(params_stripped, deterministic=True))
+    return jax.jit(make_inference_fn_from_params(params, deterministic=True))
 
 
 # ============================================================================

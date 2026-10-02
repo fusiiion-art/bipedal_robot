@@ -24,14 +24,17 @@ class RobotConfig:
     MUJOCO_MODEL_PATH = BASE_DIR / "assets" / "humanoid" / "humanoid.xml"
 
     # --- 1.1. FSR Hardware Layout ---
-    # 実機ではTeensy側で接地判定するため、位置はシミュレーション専用。
-    # MuJoCo の <sensor> は IMU(gyro/accel/quat) の後に 8ch FSR touch が
-    # 連続して並ぶ。XML では left-foot 4ch → right-foot 4ch の順に宣言されているため、
-    # ここも同じ順に合わせる。左右の足の座標は左右対称となるよう、右足だけ X 方向を反転する。
-    FSR_POSITIONS = np.array([
-        [0.012, 0.027], [-0.012, 0.027], [0.012, -0.070], [-0.012, -0.070],  # Left foot, sensor order = FL FR BL BR
-        [-0.012, 0.027], [0.012, 0.027], [-0.012, -0.070], [0.012, -0.070],  # Right foot, sensor order = FL FR BL BR (mirrored)
-    ])
+    # MuJoCo の <sensor> は IMU(gyro 3/accel 3/quat 4) の後に 8ch FSR touch が
+    # left-foot 4ch(FL FR BL BR) → right-foot 4ch の順に並ぶ (sensordata[10:18])。
+    # 実機は Teensy が各FSRを閾値判定した 0/1 フラグを送るため、方策の観測も
+    # 同じ閾値で二値化する (docs/master_plan.md §1.3「足裏接触（バイナリ）」)。
+    FSR_SENSOR_SLICE = slice(10, 18)
+    FSR_CONTACT_THRESHOLD = 0.2  # [N] 1センサーあたりの接地判定しきい値 (FSR402 の作動荷重 ≈0.2N)
+
+    # BNO055 の取り付け姿勢 (センサー座標系 → 胴体座標系の回転, クォータニオン [w,x,y,z])。
+    # assets/humanoid/humanoid.xml の imu_bno055_site euler="-90 0 0" と一致させること
+    # (tests/test_seed_readiness.py で検証)。実機の取り付け向きは要確認。
+    IMU_MOUNT_QUAT = np.array([np.sqrt(0.5), -np.sqrt(0.5), 0.0, 0.0])
     
     # --- 2. Hardware Specs ---
     
@@ -58,15 +61,14 @@ class RobotConfig:
     
     # --- Actuator Reality Gap (LPF) ---
     MOTOR_LPF_ALPHA = 0.8  # 1st-order Low-Pass Filter coefficient for HX-30HM
+    # サーボの位置分解能: 0〜1000 カウントで ±120° (real/real_io.py の sync_write_positions)。
+    # 指令の変化がこれ未満ならサーボは動かない、として指令のデッドバンドに使う
+    # (旧実装は根拠のない 0.02rad ≈ 5カウントで、1.15°未満の微修正ができなかった)。
+    SERVO_POSITION_RESOLUTION = np.deg2rad(240.0 / 1000.0)  # [rad] ≈0.0042
     
     NUM_JOINTS = len(JOINT_NAMES)
 
-    # --- お手本（Reference Trajectory）使用のトグルスイッチ ---
-    # True: サイクロイド歩行軌道に基づく「残差強化学習 (Residual RL)」
-    # False: 「お手本無し強化学習 (Direct RL)」 - 物理法則と報酬だけで自発的歩行を獲得
-    USE_REFERENCE_GAIT = False  # お手本無しでやりたい場合は False に設定！
-
-    # お手本無しの学習を劇的に安定させる「中腰デフォルト姿勢 (Default Standing Joint Angles)」
+    # 中腰デフォルト姿勢 (Default Standing Joint Angles)。行動は この姿勢からの残差 Δq。
     # ユーザーが設定したXMLの可動域に合わせて、左右で符号を反転（右は膝マイナス、左は膝プラス等）
     DEFAULT_JOINT_ANGLES = np.array([
         # 右脚 (yaw, roll, pitch, knee, ankle_pitch, ankle_roll)
@@ -89,10 +91,17 @@ class RobotConfig:
     KD = 1.0
 
     # --- 4. Sim-to-Real Gap Mitigation ---
-    # base_pos / lin_vel の大ノイズ (実機ではIMU積分ドリフトで不正確)
-    # 学習時にこれらを「信頼できない」特徴量として扱わせるためのDR
-    NOISE_BASE_POS    = 0.1   # [m]  — 実機ではゼロ埋め or VIO推定のためドリフト大
+    # lin_vel の大ノイズ (実機ではIMU積分(ZUPT)推定のため不正確)。
+    # 学習時にこれを「信頼できない」特徴量として扱わせるためのDR。
+    # (base_pos は実機で取得できないため観測では常に0。真値は critic の特権観測にのみ入る)
     NOISE_LIN_VEL     = 0.5   # [m/s] — IMU積分だと数秒でm/sオーダーのエラー
+
+    # 初期状態分布 (docs/master_plan.md §1.6)。nominal姿勢の関節角・関節角速度に一様ノイズを
+    # 加え、低い方の足裏が nominal と同じ高さで接地するよう胴体高さを補正して spawn する。
+    # 0 にすると従来どおり常に同一姿勢から開始する(この場合ゼロ行動でも直立を維持できるため、
+    # Gate A の評価が「学習した方策」と「何もしない方策」を区別できない)。
+    INIT_JOINT_POS_NOISE = 0.05   # [rad] 一様 ±
+    INIT_JOINT_VEL_NOISE = 0.2    # [rad/s] 一様 ±
     
     RANDOM_MASS_SCALE = [0.97, 1.03]  # Phase 1: DR範囲を縮小して基本直立に集中
     RANDOM_FRICTION = [0.7, 1.1]      # Phase 1: 摩擦変動を控えめに
@@ -108,17 +117,17 @@ class RobotConfig:
     PUSH_FORCE_LEVELS = []
     
     # 熱・電圧のシミュレーションパラメータ
-    RANDOM_TEMP = [20.0, 80.0]  # ℃
+    RANDOM_TEMP = [25.0, 80.0]  # ℃ (下限は熱モデルの外気温 AMBIENT_TEMP。これ未満は初回更新で25℃に丸められていた)
     RANDOM_VOLT = [9.0, 12.6]   # V
 
     # --- 5. RL Settings ---
-    # 歩行周期 (秒)
-    GAIT_PERIOD = 1.0
-    
-    # 新アーキテクチャ(RMA/遅延補償対応)における観測空間定義
     HISTORY_LEN = 5 # 過去Nステップの観測と行動(50ms分@100Hz)
     
-    # Base観測: 12(胴体) + N*2(関節角/速度) + 10(FSR/ZMP) + 2(位相) + N(理想軌道)
+    # Base観測 (84):
+    #   base_pos(3, 常に0) + 重力射影ベクトル(3) + 線速度(3) + 角速度(3)
+    #   + 関節角(N) + 関節角速度(N) + FSR接地フラグ(8) + ZMP(2, 常に0)
+    #   + 位相(2, 常に[0,1]) + 参照角(N, 常に0)
+    # 常に定数のチャネルは歩行用の旧設計の名残だが、実機ONNXとの625次元契約を保つため残している。
     BASE_OBS_DIM = 12 + (NUM_JOINTS * 2) + 10 + 2 + NUM_JOINTS
     
     # 行動次元
@@ -135,22 +144,23 @@ class RobotConfig:
     # 現在の観測次元の拡張 (RMA向け) = Base(現在) + 履歴 + 温度 + 電圧
     OBS_DIM = BASE_OBS_DIM + HISTORY_DIM + SERVO_TEMP_DIM + SUPPLY_VOLTAGE_DIM
     
+    # critic のみが使う特権観測 (docs/master_plan.md §1.3 asymmetric actor-critic)。
+    # envs/mjx_env.py の _get_privileged_obs() の内訳と一致させること。
+    #   真の base_pos(3) + 重力射影(3) + 線速度(3) + 角速度(3) + 関節角/速度(2N)
+    #   + FSR連続値(8) + 足裏水平変位(4) + DR値(質量1+摩擦1+重心3+関節粘性N+関節摩擦N)
+    #   + 外力(3) + 外乱フラグ(1)
+    PRIVILEGED_EXTRA_DIM = 12 + 2 * NUM_JOINTS + 8 + 4 + (5 + 2 * NUM_JOINTS) + 4
+    PRIVILEGED_OBS_DIM = OBS_DIM + PRIVILEGED_EXTRA_DIM
+
     # 行動空間: ±30度 (Phase 1: 初期探索で暴走しないよう縮小。Phase 2以降で拡大)
     ACTION_SCALE = np.deg2rad(30)
 
-    # === Standing-only mission constraints ===
-    # 目的は自律歩行ではなく、外乱に耐えながらその場直立を維持すること。
-    # 歩行、踏み出し、支持基底面の変更はいかなる外乱条件でも禁止。
-    ALLOW_WALKING = False
-    ALLOW_STEPPING = False
-    TARGET_VEL_X = 0.0
-    TARGET_VEL_Y = 0.0
-    TARGET_YAW_RATE = 0.0
+    # === Standing-only mission (docs/master_plan.md: standing_fixed_feet が唯一のスコープ) ===
+    # 目的は自律歩行ではなく、外乱に耐えながら両足接地のままその場直立を維持すること。
     # [2026-10-01 方針決定] 目的は直立姿勢の維持であり、足裏が初期位置から多少ずれることは許容する。
     # ただし閾値を外すと「足を滑らせて逃げる」立ち方も合格になるため、歩行・踏み出しの歯止めとして
     # 20mm を残す(旧5mm)。Gate A の slip_ok 判定(scratch/phase0_eval_diagnostics.py)で使用。
     MAX_FOOT_TRANSLATION = 0.020  # [m], 20 mm 以下を許容
-    MAX_SINGLE_FOOT_LIFT = 0.0
     FOOT_CONTACT_THRESHOLD = 0.5  # [N] シミュレーション上の各足FSR4センサー平均の最小接触力 (足全体で2.0N以上)
     
     # ======================================================
@@ -178,7 +188,7 @@ class RobotConfig:
         "recovery": 0.5,
 
         # ペナルティは大きく下げて、PTPな振動で負値が吹き上がらないようにする
-        # 注: step_penalty (0~20) と no_step_penalty (100) は歩行禁止のハード制約として
+        # 注: step_penalty (0~20) は踏み出し抑止のハード制約として
         #     REWARD_WEIGHTS を介さず mjx_rewards.py 内で直接加算される (実質重み1.0)。
         "ang_momentum_z": 0.01,
         "ang_momentum_xy": 0.01,
@@ -268,11 +278,10 @@ class RobotConfig:
     # 【設計】学習進捗率 (0.0~1.0) に基づく相対スケジュール。
     # 絶対ステップ数による CURRICULUM_SCHEDULE は廃止。
     # 
-    # 理由: USE_REFERENCE_GAIT の有無で総学習ステップ数が大きく変わっても
-    # (10M vs 20~30M)、同じ相対カリキュラムが自動的に機能する。
+    # 理由: 総学習ステップ数(--steps)を変えても同じ相対カリキュラムが機能する。
     # 
-    # 供給元: training_progress (mjx_env.py → mjx_rewards.py へ外部供給)
-    # 詳細: envs/mjx_rewards.py の _get_curriculum_disturbance_scale() を参照
+    # 供給元: training_progress (envs/training_wrapper.py の TrainingProgressWrapper)
+    # 詳細: envs/mjx_rewards.py の curriculum_disturbance_scale() を参照
     CURRICULUM_SCHEDULE_FRACTIONS = {
         0.00: 0.00,  # 学習開始時: 外乱なし
         0.10: 0.10,  # 10%進捗: 微弱外乱
@@ -280,22 +289,3 @@ class RobotConfig:
         0.50: 0.60,  # 50%進捗: 中程度外乱
         0.75: 1.00,  # 75%進捗: 最大外乱
     }
-    
-    # USE_REFERENCE_GAIT=True: 学習側説明書.md の目安(10Mステップ)
-    # USE_REFERENCE_GAIT=False (Direct RL): 20~30Mステップ推奨のため長めに設定
-    TOTAL_TRAINING_STEPS_ESTIMATE = 10_000_000 if USE_REFERENCE_GAIT else 25_000_000
-
-    # ======================================================
-    # [GAIT-2 FIXED] 歩容パラメータ (config.py に一元化)
-    # ======================================================
-    # gait_generator.py と kinematics.py から参照される定数。
-    # 複数の場所で定義されていたが、config.py に統一して保守性を向上。
-    # 
-    # ロボット物理寸法に関わるため、URDF/実機の値と 100% 同期すること。
-    GAIT_STAND_HEIGHT = 0.23  # [m] 直立時の腰の高さ
-    GAIT_STEP_HEIGHT = 0.04   # [m] 足を上げる高さ
-    GAIT_STEP_LENGTH = 0.10   # [m] 歩幅
-    GAIT_THIGH_LEN = 0.12     # [m] 大腿リンク長（股関節～膝）
-    GAIT_KNEE_LEN = 0.12      # [m] 下腿リンク長（膝～足首）
-
-    MJX_LEARNING_RATE = 1e-4  # 学習崩壊を防ぐため低めに設定
