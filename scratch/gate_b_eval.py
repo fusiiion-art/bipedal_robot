@@ -78,34 +78,18 @@ def main():
     ctx = _lazy_imports()
     RobotConfig = ctx["RobotConfig"]
     SenpuuMaruMJXEnv = ctx["SenpuuMaruMJXEnv"]
-    ppo_networks = ctx["ppo_networks"]
 
     max_steps = args.max_steps or RobotConfig.MAX_EPISODE_STEPS
 
-    model_path = ctx["get_model_path"](args.exp_name, args.version, args.model)
+    model_path = ctx["find_checkpoint"](args.exp_name, args.version, args.model)
     if model_path is None:
         raise SystemExit(
             f"checkpoint not found for exp_name={args.exp_name!r}, version={args.version}, "
             f"model={args.model!r}. --exp_name / --version / --model を確認してください。"
         )
     params = ctx["load_checkpoint"](model_path)
-
-    _probe_env = SenpuuMaruMJXEnv()
-    network = ctx["make_policy_network_factory"](
-        _probe_env.observation_size,
-        _probe_env.action_size,
-        preprocess_observations_fn=ctx["running_statistics"].normalize,
-    )
-    make_policy = ppo_networks.make_inference_fn(network)
-
-    def strip_leading_dim(leaf):
-        if hasattr(leaf, "shape") and getattr(leaf, "ndim", 0) > 0 and leaf.shape[0] == 1:
-            return leaf.squeeze(0)
-        return leaf
-
-    params_stripped = ctx["jax"].tree_util.tree_map(strip_leading_dim, params)
     # 主判定はdeterministic評価(master_plan.md §8)。
-    policy_fn = ctx["jax"].jit(make_policy(params_stripped, deterministic=True))
+    policy_fn = ctx["jax"].jit(ctx["make_inference_fn_from_params"](params, deterministic=True))
 
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -138,7 +122,9 @@ def main():
             # 外力水準ごとに新しいenvインスタンスを作ることでこれを回避する。
             env = SenpuuMaruMJXEnv()
             ctx["foot_ids"] = (env._reward_system._left_foot_id, env._reward_system._right_foot_id)
-            ctx["torque_limit"] = ctx["jp"].asarray(env._mjx_model.actuator_ctrlrange[:, 1])
+            # actuator_ctrlrange は目標関節角[rad]の範囲であってトルク上限ではない
+            # (上限0.0の関節で |τ|>=0 が常に真になり飽和率が1.0に張り付く)。
+            ctx["torque_limit"] = ctx["jp"].full(env._mjx_model.nu, RobotConfig.MOTOR_MAX_TORQUE)
             reset_fn = ctx["jax"].jit(env.reset)
             step_fn = ctx["jax"].jit(env.step)
             result = run_condition(

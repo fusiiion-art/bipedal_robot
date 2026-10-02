@@ -23,7 +23,8 @@
   python train/train_mjx.py --exp_name phase0_debug_seed42 --seed=42 --target_kl=0.02
 
 環境仕様 (robot/config.py が正本):
-  - 観測: 625次元 (base 84 + history 420 + action_history 100 + temp 20 + volt 1)
+  - 観測: dict。actor用 state 625次元 (base 84 + history 420 + action_history 100
+    + temp 20 + volt 1)、critic用 privileged_state (state + シミュレータ真値・DR値)
   - 行動: 20次元 (関節角の残差 Δq、トルク直接指令ではない)
   - エピソード長: 500 step (100Hz制御、5秒)
   - Phase 0: 外乱無効 (DISTURBANCE_CURRICULUM=False)
@@ -62,8 +63,8 @@ os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 import jax
 import jax.numpy as jnp
 
-# Reuse XLA executables across repeated WSL validation/training runs.
-jax.config.update("jax_compilation_cache_dir", "/mnt/c/bipedal_robot/.jax_cache")
+# Reuse XLA executables across repeated validation/training runs (.jax_cache/ は .gitignore 済み)。
+jax.config.update("jax_compilation_cache_dir", os.path.join(PROJECT_ROOT, ".jax_cache"))
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
 if not hasattr(jax, "device_put_replicated"):
@@ -75,12 +76,7 @@ from brax import envs
 from brax.envs import training as brax_training
 from brax.training.agents.ppo import train as ppo
 from brax.training.agents.ppo import networks as ppo_networks
-from robot.policy_network import (
-    POLICY_MAX_STD,
-    POLICY_MEAN_CLIP_SCALE,
-    POLICY_MIN_STD,
-    make_policy_network_factory,
-)
+from robot.policy_network import make_policy_network_factory
 
 # Patch brax _unpmap for JAX 0.4+ Multi-GPU safety
 def _safe_unpmap(v):
@@ -150,20 +146,13 @@ from envs.training_wrapper import TrainingProgressWrapper, EpisodeInfoResetWrapp
 #                              compute_saturation_ratio() 参照。方策が
 #                              実行不能な指令を多発させている、または
 #                              CBF/可動域制限が過剰に効いている可能性)
-#   6. Sensor/Kinematics Fallback - envs/mjx_rewards.py の com_accel が
-#                              qacc取得失敗によるフォールバック値
-#                              [0,0,-9.81]を使用中(com_accel_is_fallback)。
-#                              stability_metrics.py のv2 [CRITICAL FIX]
-#                              で説明されている「zmp_marginが死んだ指標に
-#                              なる」バグの片割れの原因だったため、
-#                              本番での再発を監視する。
 #
 # 依存するmetricsキー (envs/mjx_rewards.py, envs/mjx_env.py,
 # envs/stability_metrics.py, safety/cbf.py で提供):
 #   total_reward, total_penalty, stability_index, zmp_margin, r_upright,
 #   r_com_stab, both_feet_contact, r_cp, r_recovery,
 #   disturbance_recovery_bonus, pbrs_reward, alive, potential,
-#   action_saturation, stability_metrics_finite, com_accel_is_fallback
+#   action_saturation, stability_metrics_finite
 # ============================================================================
 
 REWARD_AUDIT_THRESHOLDS = {
@@ -342,17 +331,6 @@ def _audit_reward_metrics(metrics_dict: dict, metrics_history: list) -> list:
                 f"可能性。"
             )
 
-    # --- 6. Sensor/Kinematics Fallback ---
-    fallback_key = _find_metric_key(metrics_dict, 'com_accel_is_fallback')
-    if fallback_key is not None and metrics_dict[fallback_key] > 0.5:
-        alerts.append(
-            "[Sensor Fallback] com_accel が qacc 取得失敗によりフォール"
-            "バック値[0,0,-9.81]を使用中。envs/mjx_rewards.py の compute() "
-            "内、nq/qacc の条件分岐を確認。ZMPが重心追従に退化し、外乱下の"
-            "不安定性を過小評価している可能性がある(stability_metrics.py "
-            "のv2 changelog参照)。"
-        )
-
     # [予防追加 2026-09-13] envs/mjx_env.py の physics_step ロールバック
     # 機構が実際に発動した頻度を記録する。ロールバックにより学習自体は
     # 汚染されないが、頻発する場合はカリキュラム(外乱強度)や物理タイム
@@ -367,6 +345,102 @@ def _audit_reward_metrics(metrics_dict: dict, metrics_history: list) -> list:
         )
 
     return alerts
+
+
+# ============================================================================
+# [2026-10-02 追加] 再現性の記録 (run_manifest.json)
+# ============================================================================
+# 3seedの学習結果を「どのコード・どの設定で得たか」に紐付けるため、学習開始前に
+# git のコミット・作業ツリーの状態・解決済みのPPO設定・Braxのステップ算術を
+# <run_dir>/run_manifest.json に書き出す。作業ツリーに未コミットの変更がある場合は
+# 記録したコミットと実際のコードが一致しないため、--allow_dirty 無しでは起動しない。
+
+# 学習出力はリポジトリ内の log/ に書かれるため、作業ツリーの汚れ判定から除外する。
+_PROVENANCE_IGNORED_PREFIXES = ("log/",)
+
+
+def _git_provenance(repo_root) -> dict:
+    """学習に使うコードの git コミットと作業ツリーの状態を返す。"""
+    import subprocess
+
+    def _git(*git_args):
+        return subprocess.run(
+            ["git", "-C", str(repo_root), *git_args],
+            capture_output=True, text=True, check=True,
+        ).stdout
+
+    try:
+        commit = _git("rev-parse", "HEAD").strip()
+    except (OSError, subprocess.CalledProcessError) as e:
+        return {"available": False, "error": str(e).strip()}
+
+    branch = _git("rev-parse", "--abbrev-ref", "HEAD").strip()
+    dirty_files = []
+    for line in _git("status", "--porcelain").splitlines():
+        path = line[3:].strip().strip('"')
+        if not path.startswith(_PROVENANCE_IGNORED_PREFIXES):
+            dirty_files.append(line)
+    return {
+        "available": True,
+        "commit": commit,
+        "branch": branch,
+        "dirty": bool(dirty_files),
+        "dirty_files": dirty_files,
+        "diff_stat": _git("diff", "--stat", "HEAD").strip() if dirty_files else "",
+    }
+
+
+def _ppo_step_arithmetic(steps, num_envs, batch_size, num_minibatches, unroll_length,
+                         num_evals, action_repeat=1) -> dict:
+    """Brax PPO (brax/training/agents/ppo/train.py) と同じ式で実際の学習量を求める。
+
+    num_timesteps はそのまま使われず、評価区間ごとの training_step 回数を ceil で
+    切り上げるため、実際の総env step数は --steps を超えることがある。"""
+    import math
+    env_step_per_training_step = batch_size * unroll_length * num_minibatches * action_repeat
+    num_evals_after_init = max(num_evals - 1, 1)
+    num_training_steps_per_epoch = math.ceil(
+        steps / (num_evals_after_init * env_step_per_training_step)
+    )
+    num_policy_iterations = num_evals_after_init * num_training_steps_per_epoch
+    return {
+        "env_step_per_training_step": env_step_per_training_step,
+        "unrolls_per_env_per_training_step": batch_size * num_minibatches // num_envs,
+        "num_training_steps_per_epoch": num_training_steps_per_epoch,
+        "num_policy_iterations": num_policy_iterations,
+        "expected_total_env_steps": num_policy_iterations * env_step_per_training_step,
+        "requested_env_steps": steps,
+    }
+
+
+def _normalizer_summary(params, near_constant_std: float) -> dict:
+    """観測正規化の統計(mean/std)を観測キーごとに要約し、stdが下限付近に張り付いた
+    チャネルを列挙する。
+
+    sim内でほぼ定数のチャネルは、sim外(実機・別条件の評価)でわずかにずれただけで
+    正規化後に巨大な値になる。学習後にどのチャネルがそうなっているかを確認するために残す。"""
+    normalizer = params[0]
+    std_eps = float(np.asarray(getattr(normalizer, "std_eps", 0.0)).reshape(-1)[0])
+    means, stds = normalizer.mean, normalizer.std
+    if not isinstance(means, dict):
+        means, stds = {"obs": means}, {"obs": stds}
+    summary = {"std_eps": std_eps, "near_constant_threshold": near_constant_std, "keys": {}}
+    for key in means:
+        mean = np.asarray(means[key]).reshape(-1)
+        std = np.asarray(stds[key]).reshape(-1)
+        # std = sqrt(var + eps) なので、eps を除いた観測そのもののばらつきで判定する
+        raw_std = np.sqrt(np.maximum(std ** 2 - std_eps, 0.0))
+        flagged = np.nonzero(raw_std < near_constant_std)[0]
+        summary["keys"][key] = {
+            "std_min": float(std.min()),
+            "std_max": float(std.max()),
+            "near_constant_channels": [
+                {"index": int(i), "mean": float(mean[i]), "raw_std": float(raw_std[i])} for i in flagged
+            ],
+            "mean": mean.tolist(),
+            "std": std.tolist(),
+        }
+    return summary
 
 
 def parse_args(args=None):
@@ -403,11 +477,42 @@ def parse_args(args=None):
         "--disable_disturbed_eval", action="store_true",
         help="外乱カリキュラム評価を無効化する(従来通りの挙動に戻す)。"
     )
+    # [2026-10-02 追加] Brax PPO の既定 normalize_observations_std_eps=0.0 では、sim内で
+    # ほぼ定数の観測チャネルの std が 1e-6 に張り付き、sim外で値がわずかにずれるだけで
+    # 正規化後の入力が 1e4〜1e6 倍に増幅される。std = sqrt(var + eps) なので
+    # 1e-4 で std の下限は約0.01(観測ノイズσ=0.01と同程度)になり、
+    # 通常に変動するチャネルへの影響は小さい。
+    parser.add_argument(
+        "--obs_norm_std_eps", type=float, default=1e-4,
+        help="観測正規化 std=sqrt(var+eps) の eps (Brax既定0.0)。",
+    )
+    parser.add_argument(
+        "--allow_dirty", action="store_true",
+        help="未コミットの変更がある作業ツリーでも学習を開始する(run_manifest.jsonにdirtyとして記録)。",
+    )
     return parser.parse_args(args)
 
 def main():
     args = parse_args()
-    
+
+    provenance = _git_provenance(PROJECT_ROOT)
+    if not provenance["available"]:
+        print(f"[Warning] gitのコミット情報を取得できません。run_manifest.jsonにコード版を記録できません: "
+              f"{provenance.get('error')}")
+    elif provenance["dirty"]:
+        print("[Provenance] 作業ツリーに未コミットの変更があります (log/ 配下を除く):")
+        for line in provenance["dirty_files"]:
+            print(f"    {line}")
+        if not args.allow_dirty:
+            raise SystemExit(
+                "未コミットの変更があるため学習を開始しません。記録されるコミット "
+                f"({provenance['commit'][:12]}) と実際に学習するコードが一致しなくなるためです。\n"
+                "変更をコミットしてから再実行するか、意図した実行であれば --allow_dirty を付けてください。\n"
+                "(WSLで /mnt/c 上のリポジトリを使っていて全ファイルが変更扱いになる場合は "
+                "`git config core.fileMode false` を確認してください)"
+            )
+        print("[Provenance] --allow_dirty 指定のため続行します (run_manifest.json に dirty=true として記録)。")
+
     print("=== MJX GPU Training Pipeline (RMA Enabled) ===")
     devices = jax.devices()
     print(f"JAX Devices: {devices}")
@@ -456,7 +561,8 @@ def main():
         print(f"[Auto-Tune] (batch_size * num_minibatches) % num_envs == 0 を満たすため、num_minibatches を {num_minibatches} に自動調整しました (元: {old_minibatches})")
 
     # 1. 環境生成
-    env = envs.get_environment('senpuu_maru_mjx')
+    # [2026-10-02 FIX] env の time_out/truncated を Brax EpisodeWrapper の episode_length と一致させる。
+    env = envs.get_environment('senpuu_maru_mjx', max_episode_steps=episode_length)
     
     # 2. ログディレクトリとバージョン管理
     from pathlib import Path
@@ -751,37 +857,94 @@ def main():
 
     brax_training.wrap = _wrap_with_progress
 
+    ppo_config = dict(
+        num_timesteps=steps,
+        num_evals=num_evals,
+        reward_scaling=0.01,  # 報酬クリップ後の値をPPOの更新量に合わせる
+        episode_length=episode_length,
+        normalize_observations=True,
+        normalize_observations_std_eps=args.obs_norm_std_eps,
+        action_repeat=1,
+        unroll_length=args.unroll_length,
+        num_minibatches=num_minibatches,
+        num_updates_per_batch=args.num_updates_per_batch,
+        discounting=0.99,
+        bootstrap_on_timeout=True,
+        learning_rate=args.learning_rate,
+        entropy_cost=1e-3,
+        # --- KLダイバージェンス制御 ---
+        clipping_epsilon=0.2,           # 0.3(Braxデフォルト)→0.2に縮小
+        max_grad_norm=1.0,              # 勾配クリッピングで勾配爆発を防止
+        learning_rate_schedule='ADAPTIVE_KL',  # Brax内蔵Adaptive KL LR
+        desired_kl=args.target_kl,
+        learning_rate_schedule_min_lr=1e-5,   # KL爆発時のフロア（1e-6では低すぎてLRがstuckする）
+        learning_rate_schedule_max_lr=5e-4,   # KL安定時の天井
+        # [2026-10-02] Brax既定(False)では通常evalが確率的方策で回り、Gate A判定
+        # (deterministic評価)と条件がずれる。
+        deterministic_eval=True,
+
+        num_envs=num_envs,
+        batch_size=batch_size,
+        seed=args.seed,
+    )
+
+    import brax as _brax
+    import mujoco as _mujoco
+    manifest = {
+        "created_at": datetime.now().isoformat(),
+        "argv": sys.argv,
+        "git": provenance,
+        "allow_dirty": bool(args.allow_dirty),
+        "versions": {
+            "python": sys.version.split()[0],
+            "jax": jax.__version__,
+            "brax": getattr(_brax, "__version__", "unknown"),
+            "mujoco": _mujoco.__version__,
+        },
+        "devices": [str(d) for d in devices],
+        "ppo_config": ppo_config,
+        "ppo_step_arithmetic": _ppo_step_arithmetic(
+            steps, num_envs, batch_size, num_minibatches, args.unroll_length, num_evals,
+        ),
+        "env": {
+            "max_episode_steps": episode_length,
+            "robot_config_max_episode_steps": RobotConfig.MAX_EPISODE_STEPS,
+            "sim_dt": RobotConfig.SIM_DT,
+            "control_dt": RobotConfig.CONTROL_DT,
+            "kp": RobotConfig.KP,
+            "kd": RobotConfig.KD,
+            "obs_dim": RobotConfig.OBS_DIM,
+            "privileged_obs_dim": RobotConfig.PRIVILEGED_OBS_DIM,
+            "init_joint_pos_noise": RobotConfig.INIT_JOINT_POS_NOISE,
+            "init_joint_vel_noise": RobotConfig.INIT_JOINT_VEL_NOISE,
+            "reward_weights": dict(RobotConfig.REWARD_WEIGHTS),
+        },
+    }
+    manifest_path = run_dir / "run_manifest.json"
+
+    def _write_manifest():
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, ensure_ascii=False, indent=2, default=str)
+
+    _write_manifest()
+    arith = manifest["ppo_step_arithmetic"]
+    print(
+        f"[Info] run_manifest: {manifest_path} "
+        f"(commit={provenance.get('commit', 'unknown')[:12]}, "
+        f"env_step/iter={arith['env_step_per_training_step']}, "
+        f"policy_iters={arith['num_policy_iterations']}, "
+        f"expected_total_steps={arith['expected_total_env_steps']})",
+        flush=True,
+    )
+
     # 3. PPO学習実行 (RMA Network Architecture)
     try:
         make_inference_fn, params, metrics = ppo.train(
             environment=env,
             network_factory=make_policy_network_factory,
-            num_timesteps=steps,
-            num_evals=num_evals,
-            reward_scaling=0.01,  # 報酬クリップ後の値をPPOの更新量に合わせる
-            episode_length=episode_length,
-            normalize_observations=True,
-            action_repeat=1,
-            unroll_length=args.unroll_length,
-            num_minibatches=num_minibatches,
-            num_updates_per_batch=args.num_updates_per_batch,
-            discounting=0.99,
-            bootstrap_on_timeout=True,
-            learning_rate=args.learning_rate,
-            entropy_cost=1e-3,
-            # --- KLダイバージェンス制御 ---
-            clipping_epsilon=0.2,           # 0.3(Braxデフォルト)→0.2に縮小
-            max_grad_norm=1.0,              # 勾配クリッピングで勾配爆発を防止
-            learning_rate_schedule='ADAPTIVE_KL',  # Brax内蔵Adaptive KL LR
-            desired_kl=args.target_kl,
-            learning_rate_schedule_min_lr=1e-5,   # KL爆発時のフロア（1e-6では低すぎてLRがstuckする）
-            learning_rate_schedule_max_lr=5e-4,   # KL安定時の天井
-
-            num_envs=num_envs,
-            batch_size=batch_size,
-            seed=args.seed,
             progress_fn=progress_callback,
-            policy_params_fn=policy_params_callback
+            policy_params_fn=policy_params_callback,
+            **ppo_config,
         )
     finally:
         # 他のモジュールに影響しないよう必ず復元
@@ -789,6 +952,23 @@ def main():
 
     elapsed_time = time.time() - start_time
     print(f"Training finished in {elapsed_time/60:.1f} minutes!")
+
+    manifest["finished_at"] = datetime.now().isoformat()
+    manifest["elapsed_minutes"] = elapsed_time / 60.0
+    manifest["final_logged_env_steps"] = metrics_history[-1]["step"] if metrics_history else None
+    _write_manifest()
+
+    normalizer_summary = _normalizer_summary(params, near_constant_std=1e-3)
+    with open(run_dir / "normalizer_stats.json", "w", encoding="utf-8") as f:
+        json.dump(normalizer_summary, f, indent=2)
+    actor_flagged = normalizer_summary["keys"].get("state", {}).get("near_constant_channels", [])
+    if actor_flagged:
+        print(
+            f"[Info] actor観測のうちsim内でほぼ定数(eps除外前のstd<{normalizer_summary['near_constant_threshold']})の"
+            f"チャネルが {len(actor_flagged)} 個あります。設計上の定数(base_pos/ZMP/位相/参照角)以外が"
+            f"含まれていないか確認すること。実機で同じ値にならないと正規化後に最大 1/std 倍に増幅される: "
+            f"{run_dir / 'normalizer_stats.json'}"
+        )
 
     # --- 報酬ハッキング監査サマリー ---
     # 実機投入前に「この学習は信頼してよいか」を判断するための最終報告。

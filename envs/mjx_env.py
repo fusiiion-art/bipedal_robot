@@ -3,20 +3,24 @@
 このモジュールは SenpuuMaruMJXEnv を定義する。BraxのPipelineEnvを継承し、
 GPU/TPU上でのJAX並列学習に対応する。
 
-観測契約 (robot/config.py が正本、625次元):
-  Base observation (84) + 履歴5フレーム分 (420) + action履歴 (100)
-  + サーボ温度 (20) + 電源電圧 (1)
-  観測の要素順序・FSR左右順・履歴の新旧方向は既存checkpointとのABI互換の
-  ため変更してはならない (docs/current.md 参照)。
+観測 (dict, docs/master_plan.md §1.3 asymmetric actor-critic):
+  'state' (RobotConfig.OBS_DIM=625): actor 用。実機 (real/real_env.py) が組み立てる
+      観測と同じ内容・順序。Base observation (84) + 履歴5フレーム分 (420)
+      + 指令履歴 (100) + サーボ温度 (20) + 電源電圧 (1)。
+      Base observation の内訳は robot/config.py の BASE_OBS_DIM のコメント参照。
+  'privileged_state' (RobotConfig.PRIVILEGED_OBS_DIM): critic 用。'state' に
+      シミュレータの真値・DR値・外力を連結したもの (_get_privileged_obs)。
 
 アクション契約 (20次元):
   関節目標角の残差 (Δq)。トルク直接指令は使わない。
   パイプライン: policy output → ACTION_SCALE → default pose加算 →
-  deadband → 関節速度制限 → LPF → CBF → 熱/電圧derating → actuator
+  deadband(サーボ1カウント) → 関節速度制限 → LPF → CBF → 熱/電圧derating
+  → 0〜2制御周期のランダム遅延 → actuator
 
-固定足制約:
-  ALLOW_WALKING=False, ALLOW_STEPPING=False を常に維持する。
-  歩行・踏み替え・支持基底の変更は全て禁止 (raiseで防御的に検出)。
+初期状態 (docs/master_plan.md §1.6):
+  nominal姿勢の関節角・関節角速度に一様ノイズ (INIT_JOINT_POS_NOISE /
+  INIT_JOINT_VEL_NOISE) を加え、低い方の足裏が nominal と同じ高さで接地する
+  よう胴体高さを補正する。
 
 外乱:
   Phase 0では DISTURBANCE_CURRICULUM=False で無効。有効時は
@@ -24,632 +28,427 @@ GPU/TPU上でのJAX並列学習に対応する。
   加算する形で実装される。
 """
 
-from typing import Any, Dict, Tuple, Union
-import os
+from typing import Any, Dict
+
 import jax
 import jax.numpy as jp
+import mujoco
+import numpy as np
 from brax import envs
 from brax.envs.base import PipelineEnv, State
-import mujoco
+from brax.io import mjcf
 from mujoco import mjx
 
 from robot.config import RobotConfig
-from robot.math_utils import quat_to_euler
+from robot.math_utils import projected_gravity_jax
 from envs.actuator_model import ActuatorState, HX30HMModel
+from envs.cbf import CBFSafetyFilter
+from envs.mjx_rewards import MJXRewardSystem, curriculum_disturbance_scale
+
+# 関節クーロン摩擦DRの平滑化速度 [rad/s]。sign(v) のままだと静止付近で
+# ±dr_friction が制御周期ごとに反転し、人工的な振動源になる。
+_JOINT_FRICTION_SMOOTHING_VEL = 0.05
+
+_LEFT_FOOT_BODY = 'doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidariaikabu_hidariashiura_hidariashiura-1'
+_RIGHT_FOOT_BODY = 'doutai-v5_migidaitou_migikokansetu_migimomo_migihizabu_migigaikabu_migiashiura_migiashiura-1'
+
+
+def _box_corners(half_size: np.ndarray) -> np.ndarray:
+    signs = np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)], dtype=np.float32)
+    return signs * np.asarray(half_size, dtype=np.float32)
 
 
 class SenpuuMaruMJXEnv(PipelineEnv):
-    """
-    MuJoCo XLA (MJX) を使用した GPU/TPU 並列学習用の強化学習環境。
-    BraxのPipelineEnvを継承しており、Brax PPOとシームレスに統合可能。
+    """MuJoCo XLA (MJX) を使用した GPU/TPU 並列学習用の強化学習環境。
 
     reset(rng) -> State:
-        物理初期姿勢(qpos/qvel)を固定nominal poseにリセットし、
-        domain randomization (質量/摩擦/重心/温度/電圧) を適用する。
-        注意: 初期姿勢そのもののrandomizationは未実装 (常に同一pose)。
+        初期状態分布からspawnし、domain randomization (質量/摩擦/重心/関節粘性・摩擦/
+        温度/電圧) をサンプルする。DR値は info に保持し、step() で毎回物理モデルへ反映する。
 
     step(state, action) -> State:
-        1制御周期(CONTROL_DT=0.01s, 実機100Hz相当)を進める。
-        内部でCONTROL_DECIMATION回の物理サブステップをjax.lax.scanで実行する。
-        戻り値のState.doneはterminated(転倒等)のみを表し、truncated(時間切れ)
-        はinfo['truncated']に分離して格納される(Braxのtime_out処理と整合)。
+        1制御周期(CONTROL_DT=0.01s)を進める。内部でCONTROL_DECIMATION回の
+        物理サブステップをjax.lax.scanで実行する。
+        State.done は terminated(転倒等)のみを表し、時間切れは info['truncated'] /
+        info['time_out'] に分離する(Braxの EpisodeWrapper/bootstrap_on_timeout と整合)。
     """
-    
-    def __init__(self, obs_noise: float = 0.01, latency_steps: int = 1, **kwargs):
-        model_path = str(RobotConfig.MUJOCO_MODEL_PATH)
-        
-        fallback_xml = """<mujoco model="fallback_humanoid">
-  <option timestep="0.00416667" gravity="0 0 -9.8"/>
-  <worldbody>
-    <geom name="floor" type="plane" size="10 10 0.1" rgba="0.8 0.8 0.8 1" friction="1.0 0.5 0.5"/>
-    <body name="torso" pos="0 0 0.45">
-      <freejoint name="root"/>
-      <geom type="capsule" fromto="0 0 0 0 0 0.2" size="0.05" mass="2.0" rgba="0.2 0.6 1.0 1"/>
-      <body name="right_thigh" pos="0.05 0 0">
-        <joint name="right_hip_pitch" type="hinge" axis="0 1 0" range="-1.57 1.57" damping="0.5"/>
-        <geom type="capsule" fromto="0 0 0 0 0 -0.15" size="0.03" mass="0.5" rgba="1.0 0.4 0.2 1"/>
-        <body name="right_shin" pos="0 0 -0.15">
-          <joint name="right_knee" type="hinge" axis="0 1 0" range="-2.0 0" damping="0.5"/>
-          <geom type="capsule" fromto="0 0 0 0 0 -0.15" size="0.025" mass="0.3" rgba="1.0 0.6 0.3 1"/>
-        </body>
-      </body>
-      <body name="left_thigh" pos="-0.05 0 0">
-        <joint name="left_hip_pitch" type="hinge" axis="0 1 0" range="-1.57 1.57" damping="0.5"/>
-        <geom type="capsule" fromto="0 0 0 0 0 -0.15" size="0.03" mass="0.5" rgba="0.2 1.0 0.4 1"/>
-        <body name="left_shin" pos="0 0 -0.15">
-          <joint name="left_knee" type="hinge" axis="0 1 0" range="-2.0 0" damping="0.5"/>
-          <geom type="capsule" fromto="0 0 0 0 0 -0.15" size="0.025" mass="0.3" rgba="0.4 1.0 0.6 1"/>
-        </body>
-      </body>
-    </body>
-  </worldbody>
-  <actuator>
-    <position name="right_hip_pitch_act" joint="right_hip_pitch" kp="20" kv="0.5" ctrlrange="-1.57 1.57"/>
-    <position name="right_knee_act" joint="right_knee" kp="20" kv="0.5" ctrlrange="-2.0 0"/>
-    <position name="left_hip_pitch_act" joint="left_hip_pitch" kp="20" kv="0.5" ctrlrange="-1.57 1.57"/>
-    <position name="left_knee_act" joint="left_knee" kp="20" kv="0.5" ctrlrange="-2.0 0"/>
-  </actuator>
-</mujoco>
-"""
-        from brax.io import mjcf
-        
-        if not os.path.exists(model_path):
-            print("[Warn] Model not found. Using auto-generated fallback model.")
-            sys_brax = mjcf.loads(fallback_xml)
-            sys_mj_model = mujoco.MjModel.from_xml_string(fallback_xml)
-        else:
-            sys_brax = mjcf.load(model_path)
-            sys_mj_model = mujoco.MjModel.from_xml_path(model_path)
 
-        sys_mj_model.actuator_gainprm[:, 0] = RobotConfig.KP
-        sys_mj_model.actuator_biasprm[:, 1] = -RobotConfig.KP
-        sys_mj_model.actuator_biasprm[:, 2] = -RobotConfig.KD
+    def __init__(self, obs_noise: float = 0.01, max_episode_steps: int = None, **kwargs):
+        # info['truncated']/info['time_out'] を立てるstep数。Brax PPOの
+        # EpisodeWrapper(episode_length)と必ず一致させること(train_mjx.pyが同じ値を渡す)。
+        self._max_episode_steps = int(
+            RobotConfig.MAX_EPISODE_STEPS if max_episode_steps is None else max_episode_steps
+        )
+        if self._max_episode_steps <= 0:
+            raise ValueError(f"max_episode_steps must be positive, got {self._max_episode_steps}")
+
+        model_path = str(RobotConfig.MUJOCO_MODEL_PATH)
+        sys_brax = mjcf.load(model_path)
+        mj_model = mujoco.MjModel.from_xml_path(model_path)
+
+        mj_model.actuator_gainprm[:, 0] = RobotConfig.KP
+        mj_model.actuator_biasprm[:, 1] = -RobotConfig.KP
+        mj_model.actuator_biasprm[:, 2] = -RobotConfig.KD
         sys_brax = sys_brax.replace(
             actuator=sys_brax.actuator.replace(
-                gain=jp.full((sys_mj_model.nu,), RobotConfig.KP),
-                bias_q=jp.full((sys_mj_model.nu,), -RobotConfig.KP),
-                bias_qd=jp.full((sys_mj_model.nu,), -RobotConfig.KD),
+                gain=jp.full((mj_model.nu,), RobotConfig.KP),
+                bias_q=jp.full((mj_model.nu,), -RobotConfig.KP),
+                bias_qd=jp.full((mj_model.nu,), -RobotConfig.KD),
             )
         )
-            
-        sys_mj_model.opt.timestep = RobotConfig.SIM_DT
+        mj_model.opt.timestep = RobotConfig.SIM_DT
         sys_brax = sys_brax.replace(opt=sys_brax.opt.replace(timestep=RobotConfig.SIM_DT))
-        mjx_model = mjx.put_model(sys_mj_model)
 
         super().__init__(sys_brax, backend='mjx', n_frames=RobotConfig.CONTROL_DECIMATION, **kwargs)
-        
-        self._mjx_model = mjx_model
-        self._actuator_indices = jp.array(list(range(sys_mj_model.nu)), dtype=jp.int32)
+
+        if mj_model.nu != RobotConfig.NUM_JOINTS:
+            raise RuntimeError(f"model has {mj_model.nu} actuators, expected {RobotConfig.NUM_JOINTS}")
+        if mj_model.jnt_type[0] != mujoco.mjtJoint.mjJNT_FREE:
+            raise RuntimeError("the first joint of the model must be the torso freejoint")
+
+        self._mj_model = mj_model
+        self._mjx_model = mjx.put_model(mj_model)
         self.obs_noise = obs_noise
-        self.latency_steps = latency_steps
-        
-        actuator_to_qpos_list = []
-        actuator_to_qvel_list = []
-        for act_i in range(sys_mj_model.nu):
-            jnt_id = sys_mj_model.actuator_trnid[act_i][0]
-            qpos_adr = sys_mj_model.jnt_qposadr[jnt_id]
-            qvel_adr = sys_mj_model.jnt_dofadr[jnt_id]
-            actuator_to_qpos_list.append(qpos_adr)
-            actuator_to_qvel_list.append(qvel_adr)
-        self._actuator_to_qpos_idx = jp.array(actuator_to_qpos_list, dtype=jp.int32)
-        self._actuator_to_qvel_idx = jp.array(actuator_to_qvel_list, dtype=jp.int32)
 
-        # [2026-09-29 FIX] 重心オフセットDRの適用先。旧実装は body_ipos[0] (= world body)
-        # に加算しており、物理挙動に一切反映されていなかった。freejointを持つ胴体(root)を使う。
-        if sys_mj_model.njnt > 0 and sys_mj_model.jnt_type[0] == mujoco.mjtJoint.mjJNT_FREE:
-            self._root_body_id = int(sys_mj_model.jnt_bodyid[0])
-        else:
-            self._root_body_id = min(1, sys_mj_model.nbody - 1)
+        joint_ids = mj_model.actuator_trnid[:, 0]
+        self._actuator_to_qpos_idx = jp.asarray(mj_model.jnt_qposadr[joint_ids], dtype=jp.int32)
+        self._actuator_to_qvel_idx = jp.asarray(mj_model.jnt_dofadr[joint_ids], dtype=jp.int32)
+        self._joint_range = jp.asarray(mj_model.jnt_range[joint_ids], dtype=jp.float32)
+        self._default_pose = jp.asarray(RobotConfig.DEFAULT_JOINT_ANGLES, dtype=jp.float32)
+        self._ctrl_lower = jp.asarray(mj_model.actuator_ctrlrange[:, 0], dtype=jp.float32)
+        self._ctrl_upper = jp.asarray(mj_model.actuator_ctrlrange[:, 1], dtype=jp.float32)
 
-        from envs.mjx_rewards import MJXRewardSystem
-        left_foot_id = mujoco.mj_name2id(sys_mj_model, mujoco.mjtObj.mjOBJ_BODY, 'doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidariaikabu_hidariashiura_hidariashiura-1')
-        right_foot_id = mujoco.mj_name2id(sys_mj_model, mujoco.mjtObj.mjOBJ_BODY, 'doutai-v5_migidaitou_migikokansetu_migimomo_migihizabu_migigaikabu_migiashiura_migiashiura-1')
-        
-        if left_foot_id == -1 or right_foot_id == -1:
-            left_matches = [i for i in range(sys_mj_model.nbody) if 'hidariashiura' in sys_mj_model.body(i).name]
-            right_matches = [i for i in range(sys_mj_model.nbody) if 'migiashiura' in sys_mj_model.body(i).name]
-            
-            if not left_matches or not right_matches:
-                raise RuntimeError(
-                    f"Could not find foot bodies in MuJoCo model. "
-                    f"Left matches: {left_matches}, Right matches: {right_matches}"
-                )
-            left_foot_id = left_matches[0]
-            right_foot_id = right_matches[0]
+        # 重心オフセットDRの適用先 (freejointを持つ胴体)
+        self._root_body_id = int(mj_model.jnt_bodyid[0])
+
+        left_foot_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, _LEFT_FOOT_BODY)
+        right_foot_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, _RIGHT_FOOT_BODY)
+        if left_foot_id < 0 or right_foot_id < 0:
+            raise RuntimeError(f"foot bodies not found in {model_path}")
+        self._foot_ids = jp.array([left_foot_id, right_foot_id], dtype=jp.int32)
+
+        # spawn高さ補正用: 足裏の衝突boxの8頂点のうち最も低い点の高さ
+        foot_geoms = [
+            g for g in range(mj_model.ngeom)
+            if mj_model.geom_bodyid[g] in (left_foot_id, right_foot_id)
+            and (mj_model.geom_contype[g] or mj_model.geom_conaffinity[g])
+        ]
+        if not foot_geoms or any(mj_model.geom_type[g] != mujoco.mjtGeom.mjGEOM_BOX for g in foot_geoms):
+            raise RuntimeError("foot collision geoms must be boxes")
+        self._foot_geom_ids = jp.asarray(foot_geoms, dtype=jp.int32)
+        self._foot_geom_corners = jp.asarray(
+            np.stack([_box_corners(mj_model.geom_size[g]) for g in foot_geoms]))
+        self._nominal_sole_z = self._nominal_lowest_sole_z(mj_model)
 
         self._reward_system = MJXRewardSystem(self._mjx_model, RobotConfig.REWARD_WEIGHTS, left_foot_id, right_foot_id)
-        
-        from envs.cbf import CBFSafetyFilter
-        # [2026-09-29 FIX] DEFAULT姿勢が可動域端にある関節(hip_yaw/shoulder_pitch/elbow)で
-        # CBFマージンがDEFAULT自体を安全域外にしないよう、nominal_poseを渡す。
-        self._cbf = CBFSafetyFilter(
-            nominal_pose=jp.asarray(RobotConfig.DEFAULT_JOINT_ANGLES[:sys_mj_model.nu], dtype=jp.float32)
-        )
+        # DEFAULT姿勢が可動域端にある関節(hip_yaw/shoulder_pitch/elbow)でCBFマージンが
+        # DEFAULT自体を安全域外にしないよう、nominal_poseを渡す。
+        self._cbf = CBFSafetyFilter(nominal_pose=self._default_pose)
+
+    def _nominal_lowest_sole_z(self, mj_model) -> float:
+        data = mujoco.MjData(mj_model)
+        data.qpos[:] = 0.0
+        data.qpos[2] = RobotConfig.INITIAL_HEIGHT
+        data.qpos[3] = 1.0
+        data.qpos[np.asarray(self._actuator_to_qpos_idx)] = RobotConfig.DEFAULT_JOINT_ANGLES
+        mujoco.mj_kinematics(mj_model, data)
+        return float(self._lowest_sole_z(jp.asarray(data.geom_xpos), jp.asarray(data.geom_xmat)))
+
+    def _lowest_sole_z(self, geom_xpos: jax.Array, geom_xmat: jax.Array) -> jax.Array:
+        pos = geom_xpos[self._foot_geom_ids]                     # (G, 3)
+        rot = geom_xmat[self._foot_geom_ids].reshape(-1, 3, 3)    # (G, 3, 3)
+        corners = pos[:, None, :] + jp.einsum('gij,gkj->gki', rot, self._foot_geom_corners)
+        return jp.min(corners[..., 2])
 
     @property
     def action_size(self):
-        return self.sys.nu
-        
+        return self._mj_model.nu
+
     @property
     def observation_size(self):
-        return RobotConfig.OBS_DIM
-
-    def _get_curriculum_scale(self, training_progress: float) -> float:
-        """カリキュラム学習: 学習進捗率に応じた外乱強度スケーリング"""
-        schedule = RobotConfig.CURRICULUM_SCHEDULE_FRACTIONS
-        keys = sorted(schedule.keys())
-        
-        scale = jp.array(schedule[keys[0]], dtype=jp.float32)
-        for key in keys:
-            scale = jp.where(training_progress >= key, jp.array(schedule[key], dtype=jp.float32), scale)
-        
-        return jp.clip(scale, 0.0, 1.0)
+        return {
+            'state': (RobotConfig.OBS_DIM,),
+            'privileged_state': (RobotConfig.PRIVILEGED_OBS_DIM,),
+        }
 
     def _apply_domain_randomization(self, model, mass_scale, fric_scale, com_offset):
-        """Domain randomization を物理モデルに反映する。
+        """質量・摩擦・胴体重心オフセットのDRを物理モデルに反映する。"""
+        body_ipos = model.body_ipos.at[self._root_body_id].add(com_offset)
+        return model.replace(
+            body_mass=model.body_mass * mass_scale,
+            geom_friction=model.geom_friction * fric_scale,
+            body_ipos=body_ipos,
+        )
 
-        旧実装では乱数値を privileged observation にのみ保存しており、
-        MJX の body_mass / geom_friction / inertial COM に反映されていなかった。
-        これにより DR が「観測上のメタ情報」だけに留まり、実際の物理挙動には効かない。
-        """
-        randomized = model
-
-        if hasattr(model, 'body_mass'):
-            randomized = randomized.replace(body_mass=jp.asarray(model.body_mass) * mass_scale)
-        if hasattr(model, 'geom_friction'):
-            randomized = randomized.replace(geom_friction=jp.asarray(model.geom_friction) * fric_scale)
-        if hasattr(model, 'body_ipos') and model.body_ipos.shape[0] > 0:
-            body_ipos = jp.asarray(model.body_ipos).copy()
-            body_ipos = body_ipos.at[self._root_body_id].add(jp.asarray(com_offset, dtype=body_ipos.dtype))
-            randomized = randomized.replace(body_ipos=body_ipos)
-
-        return randomized
-
-    def _apply_joint_dr_torque(self, qfrc_applied, qvel, dr_damping, dr_friction):
-        if self._mjx_model.nq >= 7:
-            joint_vel = qvel[self._actuator_to_qvel_idx]
-            joint_torque = -dr_damping * joint_vel - dr_friction * jp.sign(joint_vel)
-            return qfrc_applied.at[self._actuator_to_qvel_idx].add(joint_torque)
-
-        joint_torque = -dr_damping * qvel - dr_friction * jp.sign(qvel)
-        return qfrc_applied.add(joint_torque)
+    def _joint_dr_torque(self, qvel, dr_damping, dr_friction):
+        joint_vel = qvel[self._actuator_to_qvel_idx]
+        friction = dr_friction * jp.tanh(joint_vel / _JOINT_FRICTION_SMOOTHING_VEL)
+        torque = -dr_damping * joint_vel - friction
+        return jp.zeros(self._mjx_model.nv).at[self._actuator_to_qvel_idx].add(torque)
 
     def reset(self, rng: jax.Array) -> State:
-        rng, rng_noise, rng_priv = jax.random.split(rng, 3)
-        
-        key_mass, key_fric, key_com, key_dr1, key_dr2, key_dr3, key_scale, key_temp, key_volt = jax.random.split(rng_priv, 9)
-        mass_scale = jax.random.uniform(key_mass, shape=(), minval=RobotConfig.RANDOM_MASS_SCALE[0], maxval=RobotConfig.RANDOM_MASS_SCALE[1])
-        fric_scale = jax.random.uniform(key_fric, shape=(), minval=RobotConfig.RANDOM_FRICTION[0], maxval=RobotConfig.RANDOM_FRICTION[1])
-        com_offset = jax.random.uniform(key_com, shape=(3,), minval=RobotConfig.RANDOM_COM_OFFSET[0], maxval=RobotConfig.RANDOM_COM_OFFSET[1])
+        rng_noise, rng_dr, rng_init, rng_obs = jax.random.split(rng, 4)
+        k_mass, k_fric, k_com, k_damp, k_jfric, k_temp, k_volt = jax.random.split(rng_dr, 7)
+        nu = self._mjx_model.nu
+        mass_scale = jax.random.uniform(k_mass, minval=RobotConfig.RANDOM_MASS_SCALE[0], maxval=RobotConfig.RANDOM_MASS_SCALE[1])
+        fric_scale = jax.random.uniform(k_fric, minval=RobotConfig.RANDOM_FRICTION[0], maxval=RobotConfig.RANDOM_FRICTION[1])
+        com_offset = jax.random.uniform(k_com, shape=(3,), minval=RobotConfig.RANDOM_COM_OFFSET[0], maxval=RobotConfig.RANDOM_COM_OFFSET[1])
+        dr_damping = jax.random.uniform(k_damp, shape=(nu,), minval=0.01, maxval=0.15)
+        dr_friction = jax.random.uniform(k_jfric, shape=(nu,), minval=0.0, maxval=0.08)
+        servo_temp = jax.random.uniform(k_temp, shape=(nu,), minval=RobotConfig.RANDOM_TEMP[0], maxval=RobotConfig.RANDOM_TEMP[1])
+        supply_volt = jax.random.uniform(k_volt, minval=RobotConfig.RANDOM_VOLT[0], maxval=RobotConfig.RANDOM_VOLT[1])
 
-        # [DR-FIX] self._mjx_model は不変のベースモデルとして保持する。
-        # DR済みモデルはエピソード冒頭でのみ構築し、DR値を info に保存して
-        # step() 側で毎回再構築する。これにより jax.jit(reset) と
-        # jax.jit(step) を別々にコンパイルしても UnexpectedTracerError が
-        # 発生しなくなる。
+        # self._mjx_model は不変のベースモデル。DR値は info に保存し step() で毎回再構築する
+        # (jax.jit(reset) と jax.jit(step) を別々にコンパイルしても tracer がリークしない)。
         randomized_model = self._apply_domain_randomization(self._mjx_model, mass_scale, fric_scale, com_offset)
-        
-        servo_temp = jax.random.uniform(key_temp, shape=(self._mjx_model.nu,), minval=RobotConfig.RANDOM_TEMP[0], maxval=RobotConfig.RANDOM_TEMP[1])
-        supply_volt = jax.random.uniform(key_volt, shape=(1,), minval=RobotConfig.RANDOM_VOLT[0], maxval=RobotConfig.RANDOM_VOLT[1])
-        
-        privileged_obs = jp.concatenate([jp.array([mass_scale, fric_scale]), com_offset, servo_temp, supply_volt])
-        
-        mjx_data = mjx.make_data(randomized_model)
-        
-        nq = self._mjx_model.nq
-        qpos = jp.zeros(nq)
-        if nq >= 7:
-            num_act = min(len(RobotConfig.DEFAULT_JOINT_ANGLES), self._mjx_model.nu)
-            default_angles = jp.array(RobotConfig.DEFAULT_JOINT_ANGLES[:num_act])
-            target_indices = self._actuator_to_qpos_idx[:num_act]
-            qpos = qpos.at[target_indices].set(default_angles)
 
-            # [2026-09-29 FIX] 旧実装は com_offset を spawn 位置にも加算しており、
-            # 胴体が最大±2cm 床へめり込む/落下する状態から開始していた。
-            # com_offset は _apply_domain_randomization() で重心位置にのみ反映する。
-            base_position = jp.array([0.0, 0.0, RobotConfig.INITIAL_HEIGHT], dtype=jp.float32)
-            qpos = qpos.at[0:3].set(base_position)
-            qpos = qpos.at[3:7].set(jp.array([1.0, 0.0, 0.0, 0.0]))
-            
-        mjx_data = mjx_data.replace(qpos=qpos, qvel=jp.zeros(self._mjx_model.nv))
-        mjx_data = mjx.forward(randomized_model, mjx_data)
-        
-        initial_potential = self._reward_system.compute_potential(mjx_data)
+        # --- 初期状態分布 (docs/master_plan.md §1.6) ---
+        k_qpos, k_qvel = jax.random.split(rng_init)
+        joint_pos = self._default_pose + jax.random.uniform(
+            k_qpos, shape=(nu,), minval=-RobotConfig.INIT_JOINT_POS_NOISE, maxval=RobotConfig.INIT_JOINT_POS_NOISE)
+        joint_pos = jp.clip(joint_pos, self._joint_range[:, 0], self._joint_range[:, 1])
+        joint_vel = jax.random.uniform(
+            k_qvel, shape=(nu,), minval=-RobotConfig.INIT_JOINT_VEL_NOISE, maxval=RobotConfig.INIT_JOINT_VEL_NOISE)
 
-        # [2026-09-29 FIX] 指令系(LPF状態・遅延バッファ・前回指令)を reset 時の実関節角で初期化する。
-        # 旧実装はゼロ初期化だったため、中腰で spawn した直後の約10stepは「膝0rad(伸展)」を
-        # 指令し続け、胴体の跳ね上がり・両足接地の喪失・足裏の滑り(Gate A で約6mm超)を
-        # reset のたびに引き起こしていた。
-        initial_cmd = mjx_data.qpos[self._actuator_to_qpos_idx]
+        qpos = jp.zeros(self._mjx_model.nq)
+        qpos = qpos.at[self._actuator_to_qpos_idx].set(joint_pos)
+        qpos = qpos.at[0:3].set(jp.array([0.0, 0.0, RobotConfig.INITIAL_HEIGHT]))
+        qpos = qpos.at[3:7].set(jp.array([1.0, 0.0, 0.0, 0.0]))
+        qvel = jp.zeros(self._mjx_model.nv).at[self._actuator_to_qvel_idx].set(joint_vel)
+
+        data = mjx.make_data(randomized_model).replace(qpos=qpos, qvel=qvel)
+        # 関節角を変えると足裏の高さ・傾きが変わるため、低い方の足裏が nominal と
+        # 同じ高さ (床面すれすれ) になるよう胴体の高さを補正してから順運動学を確定する。
+        data = mjx.kinematics(randomized_model, data)
+        dz = self._nominal_sole_z - self._lowest_sole_z(data.geom_xpos, data.geom_xmat)
+        data = data.replace(qpos=data.qpos.at[2].add(dz))
+        data = mjx.forward(randomized_model, data)
+
+        # 指令系(LPF状態・遅延バッファ・前回指令)は spawn 時の実関節角で初期化する
+        # (ゼロ初期化すると直後の数stepが「全関節0rad」を指令し、足裏が滑る)。
+        initial_cmd = data.qpos[self._actuator_to_qpos_idx]
 
         info = {
-            'step': 0,
-            'global_step': 0,
-            'phase': 0.0,
+            'step': jp.array(0, dtype=jp.int32),
             'last_action': initial_cmd,
-            'action_buffer': jp.zeros(self._mjx_model.nu),
             'filtered_action': initial_cmd,
-            'double_last_action': initial_cmd,
-            'triple_last_action': initial_cmd,
             'action_history': jp.tile(initial_cmd, (RobotConfig.HISTORY_LEN, 1)),
             'obs_history': jp.zeros((RobotConfig.HISTORY_LEN, RobotConfig.BASE_OBS_DIM)),
             'servo_temp': servo_temp,
-            'supply_volt': supply_volt[0],
-            'dr_damping': jax.random.uniform(key_dr1, shape=(self._mjx_model.nu,), minval=0.01, maxval=0.15),
-            'dr_friction': jax.random.uniform(key_dr2, shape=(self._mjx_model.nu,), minval=0.0, maxval=0.08),
-            'dr_kp_scale': jax.random.uniform(key_dr3, shape=(self._mjx_model.nu,), minval=0.7, maxval=1.3),
-            'disturbance_scale': jax.random.uniform(key_scale, minval=0.0, maxval=1.0),
-            'privileged_obs': privileged_obs,
-            'last_potential': initial_potential,
-            'rng_key': rng_noise,
-            # [DR-FIX] DRスケール値をinfoに保存し、step()側で再構築可能にする
+            'supply_volt': supply_volt,
+            'dr_damping': dr_damping,
+            'dr_friction': dr_friction,
             'mass_scale': mass_scale,
             'fric_scale': fric_scale,
             'com_offset': com_offset,
+            'last_potential': self._reward_system.compute_potential(data),
+            'foot_xy0': data.xpos[self._foot_ids, 0:2],
+            'rng_key': rng_noise,
             'was_disturbed': jp.array(False),
-            'disturbance_impulse': jp.zeros(3),  # [FIX] 力積の記録領域を初期化
-            'disturbance_recovery_steps': jp.array(1000),
-            # Direct eval / checkpoint validation should not act like an uninitialized training run.
-            # A zero progress value suppresses the entire soft-penalty branch and makes the eval path
-            # behave differently from the training objective.
+            'disturbance_force': jp.zeros(3),
+            'disturbance_recovery_steps': jp.array(1000, dtype=jp.int32),
+            # 直接評価(TrainingProgressWrapper無し)では学習終了時と同じ報酬(ソフトペナルティ満額)にする
             'training_progress': jp.array(1.0),
-            '_env_steps': jp.array(0, dtype=jp.int32),
             'terminated': jp.array(False),
             'truncated': jp.array(False),
             'time_out': jp.array(0.0),
         }
-        
-        obs, info = self._get_obs(mjx_data, info, rng_noise)
-        
-        assert obs.shape[0] == RobotConfig.OBS_DIM, (
-            f"Observation shape mismatch at reset(): computed {obs.shape[0]}, "
-            f"but RobotConfig.OBS_DIM is {RobotConfig.OBS_DIM}."
-        )
-        
-        reward, done, zero = jp.zeros(3)
-        metrics = {
-            'alive': zero, 'total_reward': zero, 'reward': zero,
-            'reward_per_step': zero, 'total_penalty': zero,
-            'lambda_phase': zero, 'r_cp': zero, 'r_recovery': zero,
-            'r_com_stab': zero, 'pbrs_reward': zero,
-            'both_feet_contact': zero,
-            'potential': zero, 'fall_penalty': zero,
-            'foot_balance': zero, 'zmp_margin': zero,
-            'disturbance_recovery_bonus': zero, 'stability_index': zero,
-            'curriculum_scale': zero,
-            'barrier_height': zero, 'barrier_torque': zero,
-            # [監査追加 2026-09-13] step()で追加したキーとpytree構造を
-            # 一致させる必要がある(reset/step間でmetrics辞書の
-            # キー集合・shapeが異なるとjax.lax.scan等でエラーになるため)。
-            'r_upright': zero,
-            'reward_is_finite': zero,
-            'action_saturation': zero, 'cbf_correction_norm': zero,
-            # [監査追加 2026-09-13] stability_metrics.py / mjx_rewards.py
-            # 側で追加した診断フラグとpytree構造を一致させる。
-            'stability_metrics_finite': zero, 'com_accel_is_fallback': zero,
-            # [予防追加 2026-09-13] envs/mjx_env.py の physics_step
-            # ロールバック機構が発散を検出したかどうかのフラグ。
+
+        obs, info = self._get_obs(data, info, rng_obs, is_reset=True)
+
+        zero = jp.array(0.0)
+        metrics = {key: zero for key in self._reward_system.METRIC_KEYS}
+        metrics.update({
             'physics_diverged': zero,
-        }
-        
-        return State(mjx_data, obs, reward, done, metrics, info)
+            'action_saturation': zero,
+            'cbf_correction_norm': zero,
+            'foot_displacement': zero,
+        })
+        return State(data, obs, zero, zero, metrics, info)
 
     def step(self, state: State, action: jax.Array) -> State:
         """1制御周期(CONTROL_DT=0.01秒)を実行する。
 
         Args:
-            state: 直前のState (pipeline_state, obs, info を含む)
-            action: 20次元、[-1, 1]相当のpolicy出力。ACTION_SCALEで
-                スケールされ、default_pose + action*ACTION_SCALE として
-                目標関節角(残差方式)に変換される。
-
-        Returns:
-            新しいState。done は terminated のみを表す
-            (truncatedは state.info['truncated'] に分離)。
-            state.metrics には reward_is_finite 等の診断フラグを含む
-            (改良規約 §18 NaN/Inf即時停止条件のため)。
+            action: 20次元、[-1, 1]のpolicy出力。default_pose + action*ACTION_SCALE を
+                目標関節角とする(残差方式)。
         """
-        info = state.info.copy()
-        
-        if RobotConfig.USE_REFERENCE_GAIT:
-            residual_rad = action * RobotConfig.ACTION_SCALE * 0.5
-            base_target_rad = info.get('reference_action', jp.zeros(self._mjx_model.nu))
-            target_rad = base_target_rad + residual_rad
-        else:
-            default_pose = jp.array(RobotConfig.DEFAULT_JOINT_ANGLES[:self._mjx_model.nu])
-            target_rad = default_pose + action * RobotConfig.ACTION_SCALE
+        info = dict(state.info)
+        target_rad = self._default_pose + action * RobotConfig.ACTION_SCALE
 
-        if getattr(RobotConfig, 'TARGET_VEL_X', 0.0) != 0.0 or getattr(RobotConfig, 'TARGET_VEL_Y', 0.0) != 0.0 or getattr(RobotConfig, 'TARGET_YAW_RATE', 0.0) != 0.0:
-            raise ValueError("Standing-only mission requires TARGET_VEL_X/Y/YAW_RATE all zero.")
-        
+        # --- 指令パイプライン: deadband → 速度制限 → LPF ---
         current_cmd = info['filtered_action']
         delta_rad = target_rad - current_cmd
-        
-        deadband_threshold = 0.02
-        delta_rad = jp.where(jp.abs(delta_rad) < deadband_threshold, 0.0, delta_rad)
-        
+        delta_rad = jp.where(jp.abs(delta_rad) < RobotConfig.SERVO_POSITION_RESOLUTION, 0.0, delta_rad)
         max_delta = RobotConfig.MOTOR_MAX_VELOCITY * RobotConfig.CONTROL_DT
         delta_rad = jp.clip(delta_rad, -max_delta, max_delta)
-        
-        constrained_target = current_cmd + delta_rad
-        
         alpha = RobotConfig.MOTOR_LPF_ALPHA
-        filtered_action = (1.0 - alpha) * current_cmd + alpha * constrained_target
+        filtered_action = current_cmd + alpha * delta_rad
         info['filtered_action'] = filtered_action
-        
-        # Apply CBF Safety Filter
-        limit_lower = self._mjx_model.actuator_ctrlrange[:, 0]
-        limit_upper = self._mjx_model.actuator_ctrlrange[:, 1]
-        
-        safe_target_rad = self._cbf.filter_action(filtered_action, limit_lower, limit_upper)
-        # [BUGFIX 2026-09-10] 旧呼び出しは compute_cbf_penalty(target_rad, limit_lower,
-        # limit_upper) となっており、safety/cbf.py の現行シグネチャ
-        # compute_cbf_penalty(nominal_action, safe_action, limit_lower=None, limit_upper=None)
-        # と噛み合っていなかった。結果として:
-        #   - 第2引数(safe_action)に limit_lower の値が誤って渡り、
-        #     direct_penalty が「target_radと関節下限との距離」という
-        #     無意味な量になっていた
-        #   - 第4引数(limit_upper)が渡されず None のままとなり、
-        #     margin-basedのsoftplusペナルティ(CBF-2/CBF-3で導入された
-        #     より厳格な項)が常にスキップされていた
-        # filter_action()が返す safe_target_rad (実際にクランプされた
-        # アクション)を正しく第2引数として渡すよう修正した。
-        # 物理的な安全性(filter_action()によるハードクランプ)自体は
-        # このバグの影響を受けていない。影響はCBFペナルティによる
-        # 報酬整形が意図通り機能していなかった点のみ。
-        cbf_penalty = self._cbf.compute_cbf_penalty(target_rad, safe_target_rad, limit_lower, limit_upper)
-        
-        # Thermal & Voltage Derating
+
+        # --- CBF安全フィルタ ---
+        lo, hi = self._ctrl_lower, self._ctrl_upper
+        safe_target_rad = self._cbf.filter_action(filtered_action, lo, hi)
+        # [2026-10-02 FIX] CBFペナルティ・診断は「方策の目標角がどれだけ安全域を越えたか」で測る。
+        # 旧実装は target_rad と LPF/速度制限後の指令の差を測っており、可動域とは無関係な
+        # 指令の追従遅れ(LPFの過渡応答)までCBF違反としてペナルティ化していた。
+        clamped_target = self._cbf.filter_action(target_rad, lo, hi)
+        cbf_penalty = self._cbf.compute_cbf_penalty(target_rad, clamped_target, lo, hi)
+
+        # --- 熱・電圧 derating ---
         act_state = ActuatorState(temperature=info['servo_temp'], supply_voltage=info['supply_volt'])
-        thermal_derating = HX30HMModel.compute_thermal_derating(act_state.temperature)
-        voltage_derating = HX30HMModel.compute_voltage_derating(act_state.supply_voltage)
-        # [BUGFIX 項目4] derating合成値を[0,1]にクランプ。voltage_deratingは
-        # 最大1.2まで許容されており、クランプしないとCBFで制限した
-        # safe_target_radを超えてしまう。
-        derating = jp.clip(thermal_derating * voltage_derating, 0.0, 1.0)
+        derating = jp.clip(
+            HX30HMModel.compute_thermal_derating(act_state.temperature)
+            * HX30HMModel.compute_voltage_derating(act_state.supply_voltage),
+            0.0, 1.0,
+        )
         real_target_rad = current_cmd + (safe_target_rad - current_cmd) * derating
-        
-        # [FIX] 熱モデルの入力を物理エンジンの実トルクに変更
-        # 前回の物理ステップで計算された actuator_force を使用して正確な発熱を推定
-        real_torque = state.pipeline_state.actuator_force
-        new_act_state = HX30HMModel.update_temperature(act_state, real_torque, RobotConfig.CONTROL_DT)
-        info['servo_temp'] = new_act_state.temperature
-        
-        # Actuator History Buffer & Stochastic Delay
-        ah = jp.roll(info['action_history'], shift=-1, axis=0)
-        ah = ah.at[-1].set(real_target_rad)
-        info['action_history'] = ah
-        
+        # 熱モデルの入力は前回の物理ステップの実トルク
+        info['servo_temp'] = HX30HMModel.update_temperature(
+            act_state, state.pipeline_state.actuator_force, RobotConfig.CONTROL_DT).temperature
+
+        # --- 指令履歴と 0〜2 制御周期のランダム遅延 ---
+        action_history = jp.roll(info['action_history'], shift=-1, axis=0).at[-1].set(real_target_rad)
+        info['action_history'] = action_history
         rng_delay, rng_push, rng_obs, next_rng = jax.random.split(info['rng_key'], 4)
         info['rng_key'] = next_rng
-        
         delay_idx = jax.random.randint(rng_delay, shape=(), minval=0, maxval=3)
-        applied_action = ah[RobotConfig.HISTORY_LEN - 1 - delay_idx]
-        
-        disturbance_enabled = getattr(RobotConfig, 'DISTURBANCE_CURRICULUM', False)
-        if disturbance_enabled:
-            curriculum_disturbance_scale = self._get_curriculum_scale(info.get('training_progress', jp.array(0.0)))
-            current_max_force = RobotConfig.RANDOM_PUSH_MAX_FORCE * curriculum_disturbance_scale
-            rng_push_trigger, rng_push_dir = jax.random.split(rng_push, 2)
+        applied_action = action_history[RobotConfig.HISTORY_LEN - 1 - delay_idx]
+
+        # --- 外乱 (DISTURBANCE_CURRICULUM=False の間は常に0) ---
+        if RobotConfig.DISTURBANCE_CURRICULUM:
+            max_force = RobotConfig.RANDOM_PUSH_MAX_FORCE * curriculum_disturbance_scale(info['training_progress'])
+            rng_push_trigger, rng_push_dir = jax.random.split(rng_push)
             is_push_step = jax.random.uniform(rng_push_trigger) < 0.03
-            push_force_raw = jax.random.uniform(
+            direction = jax.random.uniform(
                 rng_push_dir, shape=(3,),
-                minval=jp.array([-0.5, -1.0, -0.2]),
-                maxval=jp.array([0.5, 1.0, 0.2])
-            )
-            push_force_norm = push_force_raw / (jp.linalg.norm(push_force_raw) + 1e-6)
-            push_force = jp.where(is_push_step, push_force_norm * current_max_force, jp.zeros(3))
+                minval=jp.array([-0.5, -1.0, -0.2]), maxval=jp.array([0.5, 1.0, 0.2]))
+            direction = direction / (jp.linalg.norm(direction) + 1e-6)
+            push_force = jp.where(is_push_step, direction * max_force, jp.zeros(3))
         else:
             is_push_step = jp.array(False)
             push_force = jp.zeros(3)
 
-        # [FIX] 外乱の力積(Impulse)を計算して記録 (caveat契約遵守)
-        push_impulse = push_force * RobotConfig.CONTROL_DT
-        info['disturbance_impulse'] = push_impulse
+        qfrc_applied = self._joint_dr_torque(
+            state.pipeline_state.qvel, info['dr_damping'], info['dr_friction']
+        ).at[0:3].add(push_force)
 
-        if getattr(RobotConfig, 'ALLOW_WALKING', False) or getattr(RobotConfig, 'ALLOW_STEPPING', False):
-            raise ValueError("Walking/stepping is forbidden for this task.")
-        
-        qfrc_applied = jp.zeros(self._mjx_model.nv)
-        if self._mjx_model.nq >= 7:
-            qfrc_applied = qfrc_applied.at[0:3].set(push_force)
-            
-        qfrc_applied = self._apply_joint_dr_torque(
-            qfrc_applied,
-            state.pipeline_state.qvel,
-            info['dr_damping'],
-            info['dr_friction'],
-        )
-
-        # [DR-FIX] step()の冒頭でDR済みモデルを再構築する。
-        # self._mjx_modelはベースモデル（不変）のまま。
         randomized_model = self._apply_domain_randomization(
-            self._mjx_model, info['mass_scale'], info['fric_scale'], info['com_offset']
-        )
+            self._mjx_model, info['mass_scale'], info['fric_scale'], info['com_offset'])
 
-        def physics_step(carry, _):
-            d_prev = carry
-            d = carry.replace(ctrl=applied_action, qfrc_applied=qfrc_applied)
-            d = mjx.step(randomized_model, d)
-            # [予防追加 2026-09-13] NaN/Inf予防: mjx.step() は
-            # NaN-in→NaN-out のため、CONTROL_DECIMATION回のサブステップの
-            # うち1回でも発散すると、残り全サブステップが汚染され、この
-            # 環境は(次に外部からリセットされるまで)永続的にNaN化して
-            # しまう。ここで即座に直前の有効な状態へロールバックすることで
-            # 汚染の伝播を1サブステップで食い止める。発散した事実は
-            # diverged フラグとして持ち帰り、呼び出し側で done=True を
-            # 強制する(=次stepで自動リセットされる)。
-            state_is_finite = jp.all(jp.isfinite(d.qpos)) & jp.all(jp.isfinite(d.qvel))
-            d = jax.tree_util.tree_map(
-                lambda new, old: jp.where(state_is_finite, new, old), d, d_prev
-            )
-            return d, jp.logical_not(state_is_finite)
+        def physics_step(d_prev, _):
+            d = mjx.step(randomized_model, d_prev.replace(ctrl=applied_action, qfrc_applied=qfrc_applied))
+            # mjx.step は NaN-in→NaN-out のため、1サブステップでも発散すると以降が全て汚染される。
+            # 直前の有効な状態へロールバックし、発散した事実は done=True で持ち帰る。
+            ok = jp.all(jp.isfinite(d.qpos)) & jp.all(jp.isfinite(d.qvel))
+            d = jax.tree_util.tree_map(lambda new, old: jp.where(ok, new, old), d, d_prev)
+            return d, jp.logical_not(ok)
 
-        mjx_data, diverged_flags = jax.lax.scan(
-            physics_step, state.pipeline_state, (), length=RobotConfig.CONTROL_DECIMATION
-        )
+        data, diverged_flags = jax.lax.scan(
+            physics_step, state.pipeline_state, (), length=RobotConfig.CONTROL_DECIMATION)
         physics_diverged = jp.any(diverged_flags)
-        
-        was_disturbed = jp.array(is_push_step, dtype=jp.bool_)
-        disturbance_recovery_steps = jp.where(
-            is_push_step,
-            jp.array(0),
-            info.get('disturbance_recovery_steps', jp.array(0)) + 1
-        )
-        
-        reward, done, metrics, current_potential = self._reward_system.compute(
-            mjx_data, applied_action, info['last_action'], info['double_last_action'],
-            info['triple_last_action'], cbf_penalty, info['last_potential'], info['step'],
-            info.get('reference_action', jp.zeros(self._mjx_model.nu)),
-            servo_temp=info.get('servo_temp', None), 
-            supply_volt=info.get('supply_volt', 11.1),
-            global_step=jp.array(info.get('global_step', 0), dtype=jp.int32),
-            gait_phase=jp.asarray(info.get('phase', 0.0), dtype=jp.float32),
-            was_disturbed=was_disturbed,
-            disturbance_recovery_steps=disturbance_recovery_steps,
-            training_progress=info.get('training_progress', jp.array(0.0)),
-        )
-        info['last_potential'] = current_potential
 
-        # [予防追加 2026-09-13] 物理サブステップが発散(NaN/Inf)していた
-        # 場合は無条件でdone=Trueにする。physics_step()側で状態自体は
-        # 直前の有効な値へロールバック済みで安全だが、その「発散直前で
-        # 足止めされた」状態のまま学習を続けさせると、PPOがそれを
-        # 暗黙に「良い状態」と誤学習しかねないため、エピソードを
-        # 明示的に打ち切る(=fall_penaltyと同等に扱われる)。
+        disturbance_recovery_steps = jp.where(is_push_step, 0, info['disturbance_recovery_steps'] + 1)
+        reward, done, metrics, current_potential = self._reward_system.compute(
+            data, applied_action, info['last_action'], cbf_penalty,
+            info['last_potential'], info['step'],
+            servo_temp=info['servo_temp'],
+            supply_volt=info['supply_volt'],
+            was_disturbed=is_push_step,
+            disturbance_recovery_steps=disturbance_recovery_steps,
+            training_progress=info['training_progress'],
+        )
+        # 物理発散は状態をロールバック済みだが、発散直前で足止めされた状態を
+        # 「良い状態」と誤学習しないよう明示的に終了させる。
         done = jp.logical_or(done, physics_diverged)
         reward = jp.where(physics_diverged, RobotConfig.REWARD_WEIGHTS['fall_penalty'], reward)
-        metrics['physics_diverged'] = physics_diverged.astype(jp.float32)
 
-        # [監査追加 2026-09-13] CBFがtarget_radをどれだけ補正(クランプ)したか
-        # を診断指標として記録する。train_mjx.py の _audit_reward_metrics()
-        # がこれを見て「方策が実行不能な指令を多発させていないか
-        # (Action Distortion)」を検出する。計算本体は safety/cbf.py の
-        # compute_saturation_ratio() に委譲している(CBFの挙動の診断は
-        # CBFクラス自身の責務とするため)。
-        action_saturation = self._cbf.compute_saturation_ratio(
-            target_rad, safe_target_rad, limit_lower, limit_upper
-        )
-        cbf_correction_norm = jp.linalg.norm(safe_target_rad - target_rad)
-        metrics['action_saturation'] = action_saturation
-        metrics['cbf_correction_norm'] = cbf_correction_norm
+        foot_disp = data.xpos[self._foot_ids, 0:2] - info['foot_xy0']
+        metrics.update({
+            'physics_diverged': physics_diverged.astype(jp.float32),
+            'action_saturation': self._cbf.compute_saturation_ratio(target_rad, clamped_target, lo, hi),
+            'cbf_correction_norm': jp.linalg.norm(clamped_target - target_rad),
+            'foot_displacement': jp.max(jp.linalg.norm(foot_disp, axis=-1)),
+        })
 
-        info['triple_last_action'] = info['double_last_action']
-        info['double_last_action'] = info['last_action']
+        info['last_potential'] = current_potential
         info['last_action'] = applied_action
-        info['step'] += 1
-        env_steps = jp.asarray(info.get('_env_steps', info.get('global_step', 0)), dtype=jp.int32) + 1
-        info['_env_steps'] = env_steps
-        info['global_step'] = env_steps
-        
-        if RobotConfig.USE_REFERENCE_GAIT:
-            info['phase'] = (info.get('phase', 0.0) + RobotConfig.CONTROL_DT / RobotConfig.GAIT_PERIOD) % 1.0
-        else:
-            info['phase'] = 0.0
-            
+        info['step'] = info['step'] + 1
+        info['was_disturbed'] = is_push_step
+        info['disturbance_force'] = push_force
         info['disturbance_recovery_steps'] = disturbance_recovery_steps
-        info['was_disturbed'] = was_disturbed
         terminated = done
-        truncated = info['step'] >= RobotConfig.MAX_EPISODE_STEPS
-        
-        done = terminated
+        truncated = info['step'] >= self._max_episode_steps
         info['terminated'] = terminated
         info['truncated'] = truncated
-        info['time_out'] = truncated.astype(jp.float32)
-        
-        obs, info = self._get_obs(mjx_data, info, rng_obs)
-        
-        return state.replace(pipeline_state=mjx_data, obs=obs, reward=reward,
+        # 時間切れと同じstepで転倒した遷移は終端であり、bootstrap してはならない。
+        info['time_out'] = jp.logical_and(truncated, jp.logical_not(terminated)).astype(jp.float32)
+
+        obs, info = self._get_obs(data, info, rng_obs)
+        return state.replace(pipeline_state=data, obs=obs, reward=reward,
                              done=done.astype(jp.float32), metrics=metrics, info=info)
 
-    def _extract_fsr_sensor_data(self, data: mjx.Data) -> jax.Array:
-        nsensor = getattr(self._mjx_model, 'nsensordata', 0)
-        if nsensor >= 18:
-            return data.sensordata[10:18]
-        if nsensor >= 8:
-            return data.sensordata[-8:]
-        if nsensor > 0:
-            pad_len = 8 - nsensor
-            return jp.concatenate([data.sensordata, jp.zeros(pad_len)])
-        return jp.zeros(8)
+    def _fsr_forces(self, data: mjx.Data) -> jax.Array:
+        return data.sensordata[RobotConfig.FSR_SENSOR_SLICE]
 
-    def _get_obs(self, data: mjx.Data, info: Dict[str, Any], rng: jax.Array) -> Tuple[jax.Array, Dict[str, Any]]:
-        subtree_com = getattr(data, 'subtree_com', None)
-        if subtree_com is not None:
-            com_pos = subtree_com[0]
-        else:
-            if self._mjx_model.nq >= 7:
-                com_pos = data.qpos[0:3]
-            else:
-                com_pos = jp.zeros(3)
-        
-        if self._mjx_model.nq >= 7:
-            base_pos = data.qpos[0:3]
-            base_quat = data.qpos[3:7]
-            base_lin_vel = data.qvel[0:3]
-            base_ang_vel = data.qvel[3:6]
-            joint_pos = data.qpos[self._actuator_to_qpos_idx]
-            joint_vel = data.qvel[self._actuator_to_qvel_idx]
-        else:
-            base_pos = base_quat = base_lin_vel = base_ang_vel = jp.zeros(3)
-            base_quat = jp.array([1., 0., 0., 0.])
-            joint_pos = data.qpos
-            joint_vel = data.qvel
-            
-        rpy = quat_to_euler(base_quat)
-        fsr_data = self._extract_fsr_sensor_data(data)
+    def _get_obs(self, data: mjx.Data, info: Dict[str, Any], rng: jax.Array, is_reset: bool = False):
+        nu = self._mjx_model.nu
+        gravity = projected_gravity_jax(data.qpos[3:7])
+        lin_vel = data.qvel[0:3]
+        ang_vel = data.qvel[3:6]   # freejoint の角速度は胴体座標系 (IMU gyro 相当)
+        joint_pos = data.qpos[self._actuator_to_qpos_idx]
+        joint_vel = data.qvel[self._actuator_to_qvel_idx]
+        # 実機は Teensy が閾値判定した 0/1 フラグを送る (real/real_io.py)。
+        contact = (self._fsr_forces(data) > RobotConfig.FSR_CONTACT_THRESHOLD).astype(jp.float32)
 
-        foot_positions = jp.array(RobotConfig.FSR_POSITIONS)
-        total_p = jp.sum(fsr_data) + 1e-6
-        zmp_x = jp.sum(foot_positions[:, 0] * fsr_data) / total_p
-        zmp_y = jp.sum(foot_positions[:, 1] * fsr_data) / total_p
-        zmp = jp.array([zmp_x, zmp_y])
-        
-        obs_components = [base_pos, rpy, base_lin_vel, base_ang_vel, joint_pos, joint_vel, fsr_data, zmp]
-        raw_obs = jp.concatenate(obs_components)
-        
-        rng_obs, rng_pos, rng_vel = jax.random.split(rng, 3)
-        noise = jax.random.normal(rng_obs, raw_obs.shape) * self.obs_noise
-        noisy_obs = raw_obs + noise
-        
-        pos_noise = jax.random.normal(rng_pos, (3,)) * RobotConfig.NOISE_BASE_POS
-        vel_noise = jax.random.normal(rng_vel, (3,)) * RobotConfig.NOISE_LIN_VEL
-        noisy_obs = noisy_obs.at[0:3].add(pos_noise)
-        noisy_obs = noisy_obs.at[6:9].add(vel_noise)
-        
-        phase = info.get('phase', 0.0)
-        phase_obs = jp.array([jp.sin(2 * jp.pi * phase), jp.cos(2 * jp.pi * phase)])
-        
-        if RobotConfig.USE_REFERENCE_GAIT:
-            from robot.gait_generator import jax_get_reference_trajectory
-            ref_angles = jax_get_reference_trajectory(phase, self._mjx_model.nu)
-            ref_angles_obs = ref_angles
+        rng_noise, rng_vel = jax.random.split(rng)
+        sensed = jp.concatenate([gravity, lin_vel, ang_vel, joint_pos, joint_vel])
+        sensed = sensed + jax.random.normal(rng_noise, sensed.shape) * self.obs_noise
+        sensed = sensed.at[3:6].add(jax.random.normal(rng_vel, (3,)) * RobotConfig.NOISE_LIN_VEL)
+
+        base_obs = jp.concatenate([
+            jp.zeros(3),               # base_pos: 実機で取得不可のため常に0
+            sensed,                    # 重力射影(3) 線速度(3) 角速度(3) 関節角(N) 関節角速度(N)
+            contact,                   # FSR 接地フラグ(8)
+            jp.zeros(2),               # ZMP: 実機では算出しないため常に0
+            jp.array([0.0, 1.0]),      # 位相 [sin, cos]: 立位タスクでは常に位相0
+            jp.zeros(nu),              # 参照角: 立位タスクでは常に0
+        ])
+
+        if is_reset:
+            # 履歴を最初の観測で埋める (ゼロ埋めだと最初の数stepが「全関節0rad」の偽履歴になる)
+            obs_history = jp.tile(base_obs, (RobotConfig.HISTORY_LEN, 1))
         else:
-            ref_angles = jp.array(RobotConfig.DEFAULT_JOINT_ANGLES[:self._mjx_model.nu])
-            ref_angles_obs = jp.zeros_like(ref_angles)
-            
-        info['reference_action'] = ref_angles
-        
-        base_obs = jp.concatenate([noisy_obs, phase_obs, ref_angles_obs])
-        
-        obs_hist = info.get('obs_history', jp.zeros((RobotConfig.HISTORY_LEN, RobotConfig.BASE_OBS_DIM)))
-        obs_hist = jp.roll(obs_hist, shift=-1, axis=0)
-        obs_hist = obs_hist.at[-1].set(base_obs)
-        info['obs_history'] = obs_hist
-        
-        flat_obs_hist = obs_hist.flatten()
-        flat_act_hist = info.get('action_history', jp.zeros((RobotConfig.HISTORY_LEN, self._mjx_model.nu))).flatten()
-        
-        servo_temp = info.get('servo_temp', jp.zeros(self._mjx_model.nu))
-        supply_volt = jp.array([info.get('supply_volt', 11.1)])
-        
-        final_obs = jp.concatenate([base_obs, flat_obs_hist, flat_act_hist, servo_temp, supply_volt])
-        
-        assert final_obs.shape[0] == RobotConfig.OBS_DIM, (
-            f"Observation shape mismatch: computed {final_obs.shape[0]}, "
-            f"but RobotConfig.OBS_DIM is configured as {RobotConfig.OBS_DIM}."
-        )
-        
-        return final_obs, info
+            obs_history = jp.roll(info['obs_history'], shift=-1, axis=0).at[-1].set(base_obs)
+        info['obs_history'] = obs_history
+
+        actor_obs = jp.concatenate([
+            base_obs,
+            obs_history.reshape(-1),
+            info['action_history'].reshape(-1),
+            info['servo_temp'],
+            jp.reshape(info['supply_volt'], (1,)),
+        ])
+        privileged_obs = jp.concatenate([actor_obs, self._get_privileged_obs(data, info)])
+        return {'state': actor_obs, 'privileged_state': privileged_obs}, info
+
+    def _get_privileged_obs(self, data: mjx.Data, info: Dict[str, Any]) -> jax.Array:
+        """critic専用の観測 (シミュレータの真値・DR値・外力)。内訳は RobotConfig.PRIVILEGED_EXTRA_DIM。"""
+        return jp.concatenate([
+            data.qpos[0:3],
+            projected_gravity_jax(data.qpos[3:7]),
+            data.qvel[0:3],
+            data.qvel[3:6],
+            data.qpos[self._actuator_to_qpos_idx],
+            data.qvel[self._actuator_to_qvel_idx],
+            self._fsr_forces(data),
+            (data.xpos[self._foot_ids, 0:2] - info['foot_xy0']).reshape(-1),
+            jp.stack([info['mass_scale'], info['fric_scale']]),
+            info['com_offset'],
+            info['dr_damping'],
+            info['dr_friction'],
+            info['disturbance_force'],
+            jp.reshape(info['was_disturbed'].astype(jp.float32), (1,)),
+        ])
+
 
 envs.register_environment('senpuu_maru_mjx', SenpuuMaruMJXEnv)

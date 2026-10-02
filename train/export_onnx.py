@@ -7,49 +7,28 @@ import shutil
 import jax
 import tensorflow as tf
 from jax.experimental import jax2tf
-from brax.training.agents.ppo import networks as ppo_networks
-from brax.training.acme import running_statistics
 
 # append project root to sys path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from robot.config import RobotConfig
-from robot.policy_network import make_policy_network_factory
-from train.visualize_rl import load_checkpoint
+from robot.policy_network import POLICY_OBS_KEY, load_checkpoint, make_inference_fn_from_params
 
-def load_brax_inference_fn(pkl_path, obs_dim, action_dim):
-    """
-    Brax(Flax)の保存済みパラメータファイルから、
-    JAXネイティブな推論関数(predict)を復元する
-    """
+
+def load_brax_inference_fn(pkl_path):
+    """Brax(Flax)の保存済みパラメータから、actor観測(625次元)→行動 の推論関数を作る。
+
+    観測正規化(学習時の running statistics)と平均クリップ付きの分布は
+    make_inference_fn_from_params() が学習時と同じ構成で組み込む。
+    critic 用の特権観測は actor が読まないため、ONNX の入力には含めない。"""
     params = load_checkpoint(pkl_path)
     print("[INFO] Params successfully loaded from pickle.")
-    
-    # train_mjx.py と同一のネットワーク構成を使用（アーキテクチャ不一致および観測正規化不一致を防止）
-    # train_mjx.py は normalize_observations=True で学習しており、
-    # Brax内部で preprocess_observations_fn=running_statistics.normalize が適用されている。
-    # 実機投入用ONNXモデルにも正規化処理を含めるため明示的に指定する。
-    ppo_network = make_policy_network_factory(
-        observation_size=obs_dim,
-        action_size=action_dim,
-        preprocess_observations_fn=running_statistics.normalize,
-    )
-    
-    make_inference_fn = ppo_networks.make_inference_fn(ppo_network)
+    inf_fn = make_inference_fn_from_params(params, deterministic=True)
 
-    def _strip_leading_dim(leaf):
-        if hasattr(leaf, "shape") and getattr(leaf, "ndim", 0) > 0 and leaf.shape[0] == 1:
-            return leaf.squeeze(0)
-        return leaf
-
-    params_stripped = jax.tree_util.tree_map(_strip_leading_dim, params)
-    inf_fn = make_inference_fn(params_stripped, deterministic=True)
-    
     def predict(obs):
-        # Deterministic export should not sample a stochastic action with a fixed PRNG seed.
-        dummy_rng = jax.random.PRNGKey(0)
-        action, _ = inf_fn(obs, dummy_rng)
+        # deterministic なので rng は使われない
+        action, _ = inf_fn({POLICY_OBS_KEY: obs}, jax.random.PRNGKey(0))
         return action
-        
+
     return predict
 
 def export_jax_to_onnx(predict_fn, obs_dim, onnx_path):
@@ -104,7 +83,7 @@ def main():
     print(f"Target Output: {args.output}")
     
     try:
-        predict_fn = load_brax_inference_fn(args.model, obs_dim, action_dim)
+        predict_fn = load_brax_inference_fn(args.model)
         export_jax_to_onnx(predict_fn, obs_dim, args.output)
     except Exception as e:
         print(f"\n[Error] Export failed: {e}")

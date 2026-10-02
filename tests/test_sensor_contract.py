@@ -15,7 +15,7 @@ def test_sensor_order_contract_matches_xml_layout():
 
     assert model.nsensordata >= 18, "Expected IMU + 8 FSR sensors in the XML sensor block."
 
-    fsr_from_env = env._extract_fsr_sensor_data(data)
+    fsr_from_env = env._fsr_forces(data)
     assert fsr_from_env.shape == (8,), fsr_from_env.shape
     assert np.allclose(np.asarray(fsr_from_env), 0.0)
 
@@ -24,16 +24,14 @@ def test_sensor_order_contract_matches_xml_layout():
     assert np.allclose(np.asarray(fsr_in_reward), 0.0)
 
 
-def test_fsr_positions_match_left_then_right_xml_layout():
-    left_expected = np.array([
-        [0.012, 0.027], [-0.012, 0.027], [0.012, -0.070], [-0.012, -0.070],
-    ], dtype=np.float32)
-    right_expected = np.array([
-        [-0.012, 0.027], [0.012, 0.027], [-0.012, -0.070], [0.012, -0.070],
-    ], dtype=np.float32)
-
-    assert np.allclose(RobotConfig.FSR_POSITIONS[:4], left_expected)
-    assert np.allclose(RobotConfig.FSR_POSITIONS[4:], right_expected)
+def test_fsr_slice_matches_touch_sensors_left_then_right():
+    model = mujoco.MjModel.from_xml_path(str(RobotConfig.MUJOCO_MODEL_PATH))
+    touch = [i for i in range(model.nsensor) if model.sensor_type[i] == mujoco.mjtSensor.mjSENS_TOUCH]
+    adrs = [int(model.sensor_adr[i]) for i in touch]
+    sl = RobotConfig.FSR_SENSOR_SLICE
+    assert adrs == list(range(sl.start, sl.stop))
+    names = [model.sensor(i).name for i in touch]
+    assert all("_l_" in n for n in names[:4]) and all("_r_" in n for n in names[4:]), names
 
 
 def test_joint_order_matches_actuator_qpos_contract():
@@ -72,12 +70,7 @@ def test_domain_randomization_torque_uses_actuator_qvel_mapping():
     dr_damping = jp.arange(model.nu, dtype=jp.float32) + 0.1
     dr_friction = jp.zeros(model.nu, dtype=jp.float32)
 
-    qfrc = env._apply_joint_dr_torque(
-        jp.zeros(model.nv, dtype=jp.float32),
-        qvel,
-        dr_damping,
-        dr_friction,
-    )
+    qfrc = env._joint_dr_torque(qvel, dr_damping, dr_friction)
     expected = np.zeros(model.nv, dtype=np.float32)
     actuator_qvel = np.asarray(env._actuator_to_qvel_idx)
     expected[actuator_qvel] = -dr_damping * qvel[actuator_qvel]

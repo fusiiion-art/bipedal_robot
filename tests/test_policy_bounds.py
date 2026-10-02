@@ -16,7 +16,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENTRYPOINTS = (
     PROJECT_ROOT / "train" / "train_mjx.py",
     PROJECT_ROOT / "train" / "visualize_rl.py",
-    PROJECT_ROOT / "train" / "export_onnx.py",  # deploy/ から変更
+    PROJECT_ROOT / "train" / "export_onnx.py",
+    PROJECT_ROOT / "train" / "export_trajectory.py",
+    PROJECT_ROOT / "scratch" / "phase0_eval_diagnostics.py",
+    PROJECT_ROOT / "scratch" / "gate0_eval.py",
 )
 
 
@@ -63,16 +66,19 @@ def test_policy_network_forward_pass_bounds():
     assert float(jnp.max(dist.scale)) <= POLICY_MAX_STD + 1e-6
 
 
+SHARED_ENTRYPOINT_NAMES = {"make_policy_network_factory", "make_inference_fn_from_params"}
+
+
 def test_entrypoints_import_shared_policy_factory():
+    """学習・評価・出力のスクリプトはネットワーク構成を robot/policy_network.py から取得し、
+    独自に make_ppo_networks を呼ばないこと(分布・観測キーの不一致を防ぐ)。"""
     for path in ENTRYPOINTS:
-        if not path.exists():
-            continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        imports_shared_factory = any(
+        imports_shared = any(
             isinstance(node, ast.ImportFrom)
             and node.module == "robot.policy_network"
-            and any(alias.name == "make_policy_network_factory" for alias in node.names)
+            and any(alias.name in SHARED_ENTRYPOINT_NAMES for alias in node.names)
             for node in ast.walk(tree)
         )
-        assert imports_shared_factory, f"{path} does not import the shared factory"
+        assert imports_shared, f"{path} does not use robot/policy_network.py"
         assert "make_ppo_networks(" not in path.read_text(encoding="utf-8")
