@@ -82,6 +82,7 @@ GPUも実際の学習済みcheckpointも存在しないため、本スクリプ�
 """
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -307,6 +308,15 @@ class EpisodeResult:
     max_pitch_rad: float = 0.0
     recovery_time_steps: Optional[int] = None
     torque_saturation_rate: float = 0.0
+    final_state_digest: str = ""
+
+
+def state_digest(qpos, qvel, decimals: int = 6) -> str:
+    """終端状態(qpos/qvel)の指紋。同一軌道の重複(擬似反復)検出に使う。"""
+    arr = np.concatenate([np.asarray(qpos, dtype=np.float64).ravel(),
+                          np.asarray(qvel, dtype=np.float64).ravel()])
+    rounded = np.round(arr, decimals) + 0.0  # -0.0 と 0.0 を同一視する
+    return hashlib.sha1(rounded.tobytes()).hexdigest()
 
 
 def interpolate_threshold_crossing(
@@ -577,6 +587,7 @@ def run_episode(
     )
 
     return EpisodeResult(
+        final_state_digest=state_digest(state.pipeline_state.qpos, state.pipeline_state.qvel),
         length=step_index,
         terminated=terminated,
         truncated=truncated,
@@ -607,6 +618,7 @@ def run_condition(
     settling_steps: int = 50,
 ) -> dict:
     lengths, terminated_flags, truncated_flags, reasons = [], [], [], []
+    final_state_digests = []
     reward_component_accum: Dict[str, List[float]] = {}
     collapse_examples = []
     successes = 0
@@ -626,6 +638,7 @@ def run_condition(
         terminated_flags.append(result.terminated)
         truncated_flags.append(result.truncated)
         reasons.append(result.reason)
+        final_state_digests.append(result.final_state_digest)
         successes += int(result.success)
         contact_successes += int(result.both_feet_contact)
         foot_displacements.append(result.max_foot_displacement)
@@ -651,8 +664,13 @@ def run_condition(
     real_failure_steps = [l for l, t in zip(lengths, terminated_flags) if t]
     timing_diag = diagnose_failure_timing(real_failure_steps, max_steps)
 
+    n_unique_final_states = len(set(final_state_digests))
     return {
         "n_episodes": n_episodes,
+        # [2026-10-02追加] Wilson区間は独立試行を前提とする。同一の終端状態に至った
+        # episodeが複数あれば、それらは同一軌道の繰り返し(擬似反復)であり実効サンプル数は
+        # n_episodesより小さい。scratch/gate_a_qualification.py がこの値を検査する。
+        "n_unique_final_states": n_unique_final_states,
         "episode_alive": summarize_episode_alive(lengths),
         "termination_reason_counts": dict(Counter(reasons)),
         "termination_reason_rate": {

@@ -55,8 +55,19 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         はinfo['truncated']に分離して格納される(Braxのtime_out処理と整合)。
     """
     
-    def __init__(self, obs_noise: float = 0.01, latency_steps: int = 1, **kwargs):
+    def __init__(self, obs_noise: float = 0.01, latency_steps: int = 1,
+                 max_episode_steps: int = None, **kwargs):
         model_path = str(RobotConfig.MUJOCO_MODEL_PATH)
+        # [2026-10-02 FIX] info['truncated']/info['time_out'] を立てるstep数。Brax PPOの
+        # EpisodeWrapper(episode_length)と必ず一致させること(train_mjx.pyが同じ値を渡す)。
+        # 旧実装は常に RobotConfig.MAX_EPISODE_STEPS を使っており、episode_length が
+        # これより長いと step>=500 以降の全stepで time_out=1 となり、bootstrap_on_timeout が
+        # 打ち切られていない遷移の報酬に γV(s) を毎step加算していた。
+        self._max_episode_steps = int(
+            RobotConfig.MAX_EPISODE_STEPS if max_episode_steps is None else max_episode_steps
+        )
+        if self._max_episode_steps <= 0:
+            raise ValueError(f"max_episode_steps must be positive, got {self._max_episode_steps}")
         
         fallback_xml = """<mujoco model="fallback_humanoid">
   <option timestep="0.00416667" gravity="0 0 -9.8"/>
@@ -550,12 +561,14 @@ class SenpuuMaruMJXEnv(PipelineEnv):
         info['disturbance_recovery_steps'] = disturbance_recovery_steps
         info['was_disturbed'] = was_disturbed
         terminated = done
-        truncated = info['step'] >= RobotConfig.MAX_EPISODE_STEPS
-        
+        truncated = info['step'] >= self._max_episode_steps
+
         done = terminated
         info['terminated'] = terminated
         info['truncated'] = truncated
-        info['time_out'] = truncated.astype(jp.float32)
+        # [2026-10-02 FIX] 時間切れと同じstepで転倒した遷移は終端であり、bootstrap してはならない。
+        # (BraxのEpisodeWrapperも truncation = 1 - done としてこの遷移を打ち切り扱いにしない)
+        info['time_out'] = jp.logical_and(truncated, jp.logical_not(terminated)).astype(jp.float32)
         
         obs, info = self._get_obs(mjx_data, info, rng_obs)
         

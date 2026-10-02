@@ -62,6 +62,16 @@ class MJXRewardSystem:
         self._weights = weights
         self._left_foot_id = left_foot_id
         self._right_foot_id = right_foot_id
+        # data.cvel の並進成分の基準点 subtree_com[body_rootid[foot]] を引くための root body id。
+        # (テスト用ダミーモデル等で body_rootid が無い場合は 0 = world の subtree_com を使う。
+        #  浮遊ベースが1体だけのモデルでは両者は一致する)
+        body_rootid = getattr(model, 'body_rootid', None)
+        if body_rootid is None:
+            self._left_foot_root_id = 0
+            self._right_foot_root_id = 0
+        else:
+            self._left_foot_root_id = int(body_rootid[left_foot_id])
+            self._right_foot_root_id = int(body_rootid[right_foot_id])
 
         foot_support_radius = getattr(RobotConfig, 'FOOT_SUPPORT_RADIUS', 0.06)
         self._stability = StabilityMetrics(
@@ -163,6 +173,20 @@ class MJXRewardSystem:
         val = jp.where(in_margin, penalty, 0.0)
         val = jp.where(gap <= 0.0, clip_val, val)
         return jp.clip(val, 0.0, clip_val)
+
+    @staticmethod
+    def body_linear_velocity(cvel: jax.Array, xpos: jax.Array, subtree_com: jax.Array,
+                             body_id: int, root_id: int) -> jax.Array:
+        """bodyフレーム原点(xpos)のワールド並進速度 (mj_objectVelocity(mjOBJ_XBODY) と同値)。
+
+        data.cvel は [角速度; 並進速度] だが、並進速度は body 原点ではなく
+        運動学ツリーの重心 subtree_com[body_rootid] にある body 固定点の速度である。
+        原点の速度は v = cvel_lin + ω × (xpos - subtree_com[root])。
+        """
+        ang = cvel[body_id, 0:3]
+        lin = cvel[body_id, 3:6]
+        offset = xpos[body_id] - subtree_com[root_id]
+        return lin + jp.cross(ang, offset)
 
     @staticmethod
     def extract_fsr_sensor_data(model: mjx.Model, data: mjx.Data) -> jax.Array:
@@ -380,12 +404,17 @@ class MJXRewardSystem:
 
         # [2026-09-27 改善] 真の足裏水平滑りペナルティ (data.cvelベース)
         # 従来は (base_lin_vel * joint_vel)^2 という胴体依存の式で、胴体静止時の足裏ドリフトを検出できなかった。
-        # MuJoCoの data.cvel (各bodyの空間速度, 3:6が並進速度[vx, vy, vz]) から左右足裏bodyの
-        # ワールド水平速度を取り出し、その速度ノルムを直接ペナルティ化する。
+        # [2026-10-02 FIX] data.cvel[:, 3:6] は body 原点の速度ではなく、ツリー重心
+        # subtree_com[root] にある body 固定点の速度。足が ω で回転すると約 ω×0.17m の
+        # 偽速度が乗る(足ごと 0.5rad/s 回転で約8cm/s)。body_linear_velocity() で
+        # 足 body 原点のワールド速度に変換してから水平成分をペナルティ化する。
         cvel = getattr(data, 'cvel', None)
-        if cvel is not None and hasattr(cvel, 'shape') and cvel.shape[0] > max(self._left_foot_id, self._right_foot_id):
-            left_foot_vel_xy = cvel[self._left_foot_id, 3:5]
-            right_foot_vel_xy = cvel[self._right_foot_id, 3:5]
+        if (cvel is not None and subtree_com is not None and hasattr(cvel, 'shape')
+                and cvel.shape[0] > max(self._left_foot_id, self._right_foot_id)):
+            left_foot_vel_xy = self.body_linear_velocity(
+                cvel, data.xpos, subtree_com, self._left_foot_id, self._left_foot_root_id)[0:2]
+            right_foot_vel_xy = self.body_linear_velocity(
+                cvel, data.xpos, subtree_com, self._right_foot_id, self._right_foot_root_id)[0:2]
             left_foot_speed = jp.linalg.norm(left_foot_vel_xy)
             right_foot_speed = jp.linalg.norm(right_foot_vel_xy)
             p_slip = jp.clip(left_foot_speed + right_foot_speed, 0.0, 10.0)
@@ -512,7 +541,13 @@ class MJXRewardSystem:
         total_reward = jp.where(reward_is_finite > 0.5, total_reward, w['fall_penalty'])
 
         total_reward = jp.clip(total_reward, -300.0, 300.0)
-        total_reward = jp.where(done, w['fall_penalty'], total_reward)
+        # [2026-10-02 FIX] PBRSの終端処理。終端状態のポテンシャルを0とみなすと終端stepの
+        # シェーピング項は γ·0 - Φ(s_prev) = -last_potential になる。旧実装は終端stepの報酬を
+        # fall_penalty で丸ごと上書きしてこの項を落としており、転倒エピソードでは
+        # シェーピング総和が γ^(T-1)Φ(s_{T-1}) だけ残る(=方策不変性が崩れる)状態だった。
+        safe_last_potential = jp.where(jp.isfinite(last_potential), last_potential, 0.0)
+        terminal_reward = w['fall_penalty'] - safe_last_potential
+        total_reward = jp.where(done, terminal_reward, total_reward)
 
         safe_step = jp.maximum(step, 1).astype(jp.float32)
         reward_per_step = total_reward

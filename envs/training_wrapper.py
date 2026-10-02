@@ -157,16 +157,29 @@ class EpisodeInfoResetWrapper(Wrapper):
     pipeline_state/obsを初期状態へ差し替えている。旧実装は「入力stateのdone」
     (=1step遅れ)で判定していたため、新episodeの最初の1stepが前episodeの
     指令履歴(filtered_action等)・DR値・last_potential・info['step']のまま
-    実行されていた。戻り値のdoneで判定し、pipeline_stateと同じstepで揃える。"""
+    実行されていた。戻り値のdoneで判定し、pipeline_stateと同じstepで揃える。
 
-    RESETTABLE_KEYS = (
-        "step", "last_potential", "action_history", "obs_history",
-        "filtered_action", "last_action", "double_last_action", "triple_last_action",
-        "servo_temp", "supply_volt", "dr_damping", "dr_friction", "dr_kp_scale",
-        "disturbance_scale", "privileged_obs", "disturbance_recovery_steps",
-        # DR値 (項目2でinfoに追加)
-        "mass_scale", "fric_scale", "com_offset",
-    )
+    [2026-10-02 FIX] 旧実装はリセット対象キーを RESETTABLE_KEYS に列挙しており、
+    was_disturbed / disturbance_impulse / phase / reference_action など列挙漏れの
+    キーが前episodeの値を持ち越していた(新キー追加時にも漏れる構造)。現在は
+    raw env の reset() が返す info の全キーを、PRESERVED_KEYS(エピソードを跨いで
+    持ち越すべきもの)を除いてリセットする。
+    さらに AutoResetWrapper は pipeline_state/obs を学習開始時の最初の reset 結果
+    (first_pipeline_state/first_obs)で差し替えるため、obs 末尾のサーボ温度・電圧が
+    最初のepisodeのDR値のまま、obs_history とも食い違った状態で新episodeの
+    最初の行動が決まっていた。info と同じ fresh reset から pipeline_state/obs も
+    取り直し、新episodeの初期状態を info と完全に一致させる。"""
+
+    # エピソード境界を跨いで持ち越すキー:
+    #   rng_key: 乱数系列は env ごとに継続させる(リセットすると系列が巻き戻る)
+    #   _env_steps/global_step/training_progress: TrainingProgressWrapper が管理する学習全体のカウンタ
+    #   terminated/truncated/time_out: このstep(=終了したepisodeの最終遷移)の終了種別。
+    #     Brax PPO は戻り値stateの info['time_out'] を当該遷移の extras として読むため、
+    #     ここでリセットすると bootstrap_on_timeout が効かなくなる。
+    PRESERVED_KEYS = frozenset({
+        "rng_key", "_env_steps", "global_step", "training_progress",
+        "terminated", "truncated", "time_out",
+    })
 
     def step(self, state, action):
         is_batched = state.obs.ndim > 1
@@ -183,13 +196,24 @@ class EpisodeInfoResetWrapper(Wrapper):
         # このstepでdoneになった(=AutoResetWrapperが初期状態へ差し替えた)スロット
         d = state.done > 0.5
         def pick(fresh, cur):
+            fresh = jp.asarray(fresh)
+            cur = jp.asarray(cur)
             cond = d
             if cond.ndim:
+                if cur.ndim == 0 or cur.shape[0] != cond.shape[0]:
+                    # バッチ次元を持たない葉(AutoResetWrapperのwhere_doneと同じ扱い)
+                    return cur
                 cond = jp.reshape(cond, [cond.shape[0]] + [1] * (cur.ndim - 1))
-            return jp.where(cond, fresh, cur)
+            return jp.where(cond, fresh, cur).astype(cur.dtype)
 
         new_info = dict(state.info)
-        for key in self.RESETTABLE_KEYS:
-            if key in fresh_state.info and key in state.info:
-                new_info[key] = pick(fresh_state.info[key], state.info[key])
-        return state.replace(info=new_info)
+        for key, fresh_value in fresh_state.info.items():
+            if key in self.PRESERVED_KEYS or key not in state.info:
+                continue
+            new_info[key] = jax.tree_util.tree_map(pick, fresh_value, state.info[key])
+
+        pipeline_state = jax.tree_util.tree_map(
+            pick, fresh_state.pipeline_state, state.pipeline_state
+        )
+        obs = jax.tree_util.tree_map(pick, fresh_state.obs, state.obs)
+        return state.replace(pipeline_state=pipeline_state, obs=obs, info=new_info)

@@ -1,6 +1,31 @@
 # 進捗ステータス
 
-最終更新: 2026-09-21（Copilot）
+最終更新: 2026-10-02（Claude）
+
+---
+
+## 2026-10-02: 3seed学習(Gate A)前の追加レビュー対応
+
+外部レビュー（N1〜N14、リポジトリ非参照で作成）を実コード・Brax 0.14.2 のソースと突き合わせ、
+実際に該当したものだけを修正した。回帰テストは `tests/test_seed_readiness.py`。
+
+| 指摘 | 判定 | 対応 |
+|---|---|---|
+| N1 公開リポジトリにコードが無い | 前提誤り（main に全コードあり） | `run_manifest.json` に git コミット・dirty 状態を記録。未コミット変更があると起動拒否（`--allow_dirty`） |
+| N2 方策分布パッチの import 依存 | 現状の全経路は patch 済みだが構造的に脆い | グローバルパッチを廃止し、サブクラスを factory で注入 |
+| N3 AutoReset の info 非リセット | 一部該当 | done 時に info 全キー（`rng_key`/学習進捗/終了種別を除く）と `pipeline_state`/`obs` を同じ fresh reset から取得。旧実装は obs 末尾の温度・電圧が最初の episode の DR 値のままだった |
+| N4 timeout が −30 で上書き | 前提誤り（env の done は転倒のみ）。別の不整合あり | `time_out` を転倒と同時の時間切れで立てない。env の打ち切り step を PPO の `episode_length` に一致させる（旧実装は episode_length>500 で step≥500 の全 step に γV(s) が加算された） |
+| N5 Wilson 下限の擬似反復 | 前提誤り（評価 episode ごとに観測ノイズ・遅延・関節 DR の乱数が異なる） | 終端状態の指紋 `n_unique_final_states` を記録し、重複があれば Gate A 判定を参考扱いにする |
+| N6 観測正規化 std の下限 | 該当（Brax 既定 eps=0 → std 下限 1e-6） | `--obs_norm_std_eps` 既定 1e-4（std 下限≈0.01）。学習後に `normalizer_stats.json` を出力 |
+| N7 `cvel[:,3:6]` は足の速度ではない | 該当（足ごと 0.5rad/s 回転で約8cm/s の偽速度） | `mj_objectVelocity(mjOBJ_XBODY)` と同値の変換を実装 |
+| N8 CP/ZMP 入力がノイズ支配 | 前提誤り（報酬はノイズなしの真値を使用） | 変更なし（胴体速度/加速度で COM を近似している点は Phase 1 の外乱導入時に再検討） |
+| N9 Euler+kv の陽的ダンピング | 該当せず（armature=0.01 により最小 I_eff=0.010、dt·kd/I=0.25 で安定限界2に対し8倍の余裕） | 変更なし |
+| N10 PBRS 終端 | 終端のみ該当（reset 時 Φ(s0) 初期化と λ の状態依存性は問題なし） | 終端 step の報酬を `fall_penalty − Φ(s_prev)` に変更 |
+| N11 PPO のステップ算術 | 記録の欠如のみ | `run_manifest.json` に env_step/iter・方策更新回数・実際の総 step 数を記録（既定設定で 247 回、10,117,120 step） |
+| N12 学習中 eval が確率的方策 | 該当 | `deterministic_eval=True` |
+| N13/N14 実機系 | Phase 1 前に対応 | 変更なし |
+
+3seed は修正後のコミットで、`--seed` だけを変えて実行すること。
 
 ---
 

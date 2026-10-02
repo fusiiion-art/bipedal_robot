@@ -10,6 +10,9 @@
 
 - **学習**: `train/train_mjx.py` + `envs/mjx_env.py` の JAX/MJX + Brax PPO
   - ラッパー構成: `raw env` → `AutoResetWrapper` → `EpisodeInfoResetWrapper` → `TrainingProgressWrapper`
+  - `EpisodeInfoResetWrapper` は done になった env の `info` 全キー（`rng_key` と学習進捗・終了種別を除く）と `pipeline_state`/`obs` を同じ fresh reset の値に揃える
+  - env の `max_episode_steps`（time_out 判定）は PPO の `episode_length` と同じ値を渡す
+  - 学習開始時に `<run_dir>/run_manifest.json`（git コミット・解決済み PPO 設定・実際の総 step 数）を書き出す。未コミットの変更があると起動しない（`--allow_dirty` で明示的に許可）
   - DR (Domain Randomization): ベースモデルは不変とし、`step()` 冒頭でスケーリング適用モデルを動的生成して `mjx.step()` および `reward_system.compute()` に渡す（JIT トレーサーリーク防止）
   - 安全フィルタ: `envs/cbf.py` による Control Barrier Function + 熱・電圧 derating クランプ (`jp.clip(..., 0.0, 1.0)`)
 - **実機**: Raspberry Pi 5 の `real/real_env.py` と Teensy 4.1 の `real/real_io.py`
@@ -69,6 +72,7 @@
 - `POLICY_MIN_STD = 0.15`
 - `POLICY_MAX_STD = 3.0`
 - softsign 式による単一平均値クリップ + std bounds クリップ
+- 上記は `BoundedNormalTanhDistribution` として `make_policy_network_factory()` が注入する（brax 本体へのグローバルなパッチは行わない。評価・ONNX出力も必ずこの factory を使う）
 
 ---
 

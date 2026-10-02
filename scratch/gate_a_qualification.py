@@ -24,6 +24,11 @@ master_plan.md はこの閾値の具体的な数値を確定していない(v3�
 n_episodes < 200 の場合はmaster_plan.md §4.5/§8の要求(n>=200)を満たして
 いない旨の警告を出す(判定は行うが、正式なGate Aクローズの根拠としては
 不十分であることを明示する)。
+
+[2026-10-02追加] Wilson区間は独立試行を前提とする。レポートの
+n_unique_final_states(終端状態の異なるepisode数)が n_episodes より小さい場合、
+同一軌道の繰り返し(擬似反復)が含まれており実効サンプル数が n より小さいため、
+警告を出して参考判定扱いにする。
 """
 
 import argparse
@@ -73,6 +78,7 @@ def main():
         success_rate = float(cond["success_rate"])
         successes = round(success_rate * n)
         lower = wilson_lower_bound(successes, n, z=args.z)
+        n_unique = cond.get("n_unique_final_states")
         per_seed.append({
             "report": str(path),
             "checkpoint": data.get("checkpoint"),
@@ -80,11 +86,18 @@ def main():
             "success_rate": success_rate,
             "wilson_lower_95": lower,
             "n_sufficient": n >= 200,
+            "n_unique_final_states": n_unique,
+            "independent": n_unique is not None and int(n_unique) == n,
         })
 
     print(f"評価条件: {args.condition}　閾値(Wilson下限): {args.threshold}\n")
     for row in per_seed:
         flag = "" if row["n_sufficient"] else "  [WARN] n<200 (master_plan.md §4.5/§8 の要求未達)"
+        if row["n_unique_final_states"] is None:
+            flag += "  [WARN] n_unique_final_states未記録(旧レポート。擬似反復を検査できない)"
+        elif not row["independent"]:
+            flag += (f"  [WARN] 終端状態の重複あり(unique={row['n_unique_final_states']}/{row['n_episodes']})"
+                     "。同一軌道の反復が含まれ実効nが小さい")
         print(
             f"  {row['checkpoint']}: n={row['n_episodes']:>4d}  "
             f"success_rate={row['success_rate']:.4f}  "
@@ -94,9 +107,17 @@ def main():
     worst = min(per_seed, key=lambda r: r["wilson_lower_95"])
     passed = worst["wilson_lower_95"] >= args.threshold
     all_n_sufficient = all(r["n_sufficient"] for r in per_seed)
+    all_independent = all(r["independent"] for r in per_seed)
+
+    caveats = []
+    if not all_n_sufficient:
+        caveats.append("n<200のseedを含む")
+    if not all_independent:
+        caveats.append("擬似反復(終端状態の重複)を含む、または未検査のseedがある")
 
     print(f"\nmin(Wilson下限) = {worst['wilson_lower_95']:.4f}  (最悪seed: {worst['checkpoint']})")
-    print(f"判定: {'PASS' if passed else 'FAIL'}" + ("" if all_n_sufficient else "　※n<200のseedを含むため参考判定にとどめること"))
+    print(f"判定: {'PASS' if passed else 'FAIL'}"
+          + ("" if not caveats else f"　※{'、'.join(caveats)}ため参考判定にとどめること"))
 
 
 if __name__ == "__main__":
