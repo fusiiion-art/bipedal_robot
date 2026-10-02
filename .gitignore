@@ -29,6 +29,8 @@ venv_wsl/
 
 # --- Logs & checkpoints ---
 logs/
+# 実際のログディレクトリは log/。checkpoint (pkl) は除外し、json ログ・レポートは残す [T6]
+log/**/*.pkl
 log_test/
 *.log
 MUJOCO_LOG.TXT
