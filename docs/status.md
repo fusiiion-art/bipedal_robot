@@ -1,8 +1,17 @@
 # 進捗ステータス
 
-最終更新: 2026-10-02（Claude）
+最終更新: 2026-10-03（Claude）
 
 ---
+
+## 2026-10-03: Gate A 3seed前 修正指示書（§1〜§3）対応
+
+run の扱い: 今回の学習は **診断run**（D1: 観測・初期状態・DR は現状のまま。正式な Gate A Qualification にはしない）。
+ablation で1つずつ戻す順番: T7 → T8 → T9 → T10（T8〜T10 はコミット 50c238a に含まれる）。
+
+| Task | 内容 | 結果 |
+|---|---|---|
+| T7 | `humanoid.xml` に `<contact><exclude>` を追加（股関節ヨー球⇔太もも、床⇔足首ピッチリンク） | 純MuJoCo・デフォルト姿勢1秒PD保持で、FSR合計/体重 67%→100%、左右荷重 55:45→50:50、静止時の最大関節トルク 0.49→0.17 N·m、床と足裏以外の接触 4→0、自己接触 2→0。`tests/test_contact_model.py`（MJX の FSR も検査）。Gate 0 再実行: `pd_hold_mujoco` PASS（roll RMS 0.74°）、`zero_action_mjx` PASS（roll 最大 1.12°、pitch 最大 0.58°）。**物理が変わったため旧 checkpoint とは比較しない** |
 
 ## 2026-10-02: 3seed学習(Gate A)前の追加レビュー対応
 

@@ -229,6 +229,19 @@
     </actuator>
 
     <!-- ============================================================ -->
+    <!-- CONTACT: 衝突除外 [T7 2026-10-02]                               -->
+    <!-- 股関節ヨーリンクの球と太もものカプセルがデフォルト姿勢で常時食い込む     -->
+    <!-- (左13.6mm/右6.4mm)。足首ピッチリンクのカプセル(r=20mm)が床に接地し、     -->
+    <!-- 体重の約1/3がFSR以外で支えられる。tests/test_contact_model.py で検証。 -->
+    <!-- ============================================================ -->
+    <contact>
+        <exclude body1="doutai-v5_hidaridairou_hidaridairou-1" body2="doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarimomo-1"/>
+        <exclude body1="doutai-v5_migidaitou_migidaitou-1" body2="doutai-v5_migidaitou_migikokansetu_migimomo_migimomo-1"/>
+        <exclude body1="world" body2="doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidariaikabu_hidarihizabu-2"/>
+        <exclude body1="world" body2="doutai-v5_migidaitou_migikokansetu_migimomo_migihizabu_migigaikabu_migigaikabu-1"/>
+    </contact>
+
+    <!-- ============================================================ -->
     <!-- SENSORS: 状態空間の定義 (IMU & 8ch FSR足圧)                     -->
     <!-- ============================================================ -->
     <sensor>
