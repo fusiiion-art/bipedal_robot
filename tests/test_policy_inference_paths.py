@@ -53,7 +53,10 @@ def params_and_obs():
 
 
 def _batched(policy, obs):
-    return np.asarray(jax.jit(jax.vmap(lambda o: policy(o, jax.random.PRNGKey(0))[0]))(obs))
+    # GPU では float32 の行列積が既定で TF32 相当になり、厳密な float32 計算(実機の onnxruntime/CPU)と
+    # 行動が最大 5e-3 程度ずれる。ここでは式の一致を検査するため最高精度で計算する。
+    with jax.default_matmul_precision("highest"):
+        return np.asarray(jax.jit(jax.vmap(lambda o: policy(o, jax.random.PRNGKey(0))[0]))(obs))
 
 
 def test_all_inference_paths_agree(params_and_obs):
