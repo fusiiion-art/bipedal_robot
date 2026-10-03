@@ -168,6 +168,9 @@ class RobotConfig:
     GATE_A_MAX_TORQUE_SAT_RATE = 0.01      # |τ| >= 0.98·MOTOR_MAX_TORQUE の関節を含むstepの割合
     GATE_A_MAX_REL_HEIGHT_DROP = 0.02      # 初期の足裏相対高さからの許容低下 [m]
     GATE_A_ILLEGAL_CONTACT_STEPS = 2       # 床と足裏以外の接触がこのstep数以上連続したら違反
+    # [2026-10-03 人間承認] reset 直後の着地の過渡 (FSR荷重の立ち上がり) を both_feet_contact の
+    # 判定から除く step 数。0.3 s。他の成功条件は step 1 から判定する。
+    GATE_A_CONTACT_SETTLE_STEPS = 30
     FOOT_CONTACT_THRESHOLD = 0.5  # [N] シミュレーション上の各足FSR4センサー平均の最小接触力 (足全体で2.0N以上)
     
     # ======================================================

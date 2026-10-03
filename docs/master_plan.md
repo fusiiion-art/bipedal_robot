@@ -357,6 +357,7 @@ success \=
 | height\_ok | `GATE_A_MAX_REL_HEIGHT_DROP`（初期の足裏相対高さからの低下） | 0.02 m |
 | no\_illegal\_contact | `GATE_A_ILLEGAL_CONTACT_STEPS`（床と足裏以外の接触の連続step数） | 2step以上の連続が0回 |
 | slip\_ok | `MAX_FOOT_TRANSLATION` | 20 mm |
+| both\_feet\_contact | `GATE_A_CONTACT_SETTLE_STEPS`（reset直後のこのstep数は判定しない。2026-10-03決定） | 30 step（0.3 s）。以降は片足のFSR平均<0.5Nが2step連続で失敗 |
 
 Wilson下限の合格閾値（0.90 / 0.95）と、判定に使うcheckpoint（`best_params` / `final_params`）は未決定。
 

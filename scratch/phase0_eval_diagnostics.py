@@ -241,6 +241,25 @@ def diagnose_failure_timing(
     }
 
 
+def track_contact_after_settle(
+    step_index: int,
+    settle_steps: int,
+    both_feet_now: bool,
+    consecutive_loss_steps: int,
+    real_loss: bool,
+    grace_steps: int,
+) -> Tuple[int, bool]:
+    """[2026-10-03] reset 直後 `settle_steps` step の間は両足接地を判定しない。
+
+    spawn 直後は足裏の荷重が立ち上がるまで数 step かかり (FSR は reset 時 0N)、初期状態の
+    関節角ノイズで左右の着地もずれる。ゼロ行動ベースラインでは接地切れが全て step 1〜13 に
+    集中し (step 30 以降は 0/40)、両足接地の通過率が 24% まで落ちていた。
+    この区間を除いた後は track_sustained_contact_loss() と同じ判定。"""
+    if step_index <= settle_steps:
+        return 0, real_loss
+    return track_sustained_contact_loss(both_feet_now, consecutive_loss_steps, real_loss, grace_steps)
+
+
 def track_sustained_contact_loss(
     both_feet_now: bool,
     consecutive_loss_steps: int,
@@ -584,7 +603,8 @@ def run_episode(
         max_pitch = max(max_pitch, abs(float(rpy[1])))
         contact_metric = float(np.asarray(getattr(state, "metrics", {}).get("both_feet_contact", 0.0)))
         both_feet_now = contact_metric >= 0.5
-        consecutive_contact_loss_steps, real_contact_loss = track_sustained_contact_loss(
+        consecutive_contact_loss_steps, real_contact_loss = track_contact_after_settle(
+            step_index, RobotConfig.GATE_A_CONTACT_SETTLE_STEPS,
             both_feet_now, consecutive_contact_loss_steps, real_contact_loss, contact_loss_grace_steps,
         )
         both_feet_contact = not real_contact_loss
@@ -946,6 +966,7 @@ def main():
             "max_torque_saturation_rate": RobotConfig.GATE_A_MAX_TORQUE_SAT_RATE,
             "max_rel_height_drop_m": RobotConfig.GATE_A_MAX_REL_HEIGHT_DROP,
             "illegal_contact_consecutive_steps": RobotConfig.GATE_A_ILLEGAL_CONTACT_STEPS,
+            "contact_settle_steps": RobotConfig.GATE_A_CONTACT_SETTLE_STEPS,
         },
         "note_initial_state_randomization": (
             f"全セルで初期状態分布(master_plan.md §1.6)を適用: 関節角 ±{RobotConfig.INIT_JOINT_POS_NOISE} rad, "

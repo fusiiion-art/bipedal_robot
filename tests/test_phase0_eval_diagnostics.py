@@ -25,6 +25,7 @@ from scratch.phase0_eval_diagnostics import (
     illegal_floor_contact,
     tilt_from_quat,
     track_illegal_contact,
+    track_contact_after_settle,
 )
 from robot.config import RobotConfig
 import numpy as np
@@ -65,6 +66,18 @@ def test_gate_a_success_requires_every_criterion():
 def test_gate_a_not_alive_without_time_limit():
     # env の time limit に届かず評価予算で打ち切られた episode は成功に数えない
     assert not _passing_episode(truncated=False)["success"]
+
+
+def test_contact_loss_during_settle_window_is_ignored():
+    consecutive, lost = 0, False
+    # reset 直後 (step 1〜30) は何 step 接地が切れても失敗にしない
+    for t in range(1, 31):
+        consecutive, lost = track_contact_after_settle(t, 30, False, consecutive, lost, grace_steps=2)
+    assert not lost and consecutive == 0
+    # 31 step 目以降は従来どおり、2step 連続で失敗
+    for t in (31, 32):
+        consecutive, lost = track_contact_after_settle(t, 30, False, consecutive, lost, grace_steps=2)
+    assert lost
 
 
 def test_tilt_from_quat():

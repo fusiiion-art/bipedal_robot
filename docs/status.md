@@ -16,6 +16,7 @@ ablation で1つずつ戻す順番: T7 → T8 → T9 → T10（T8〜T10 はコ�
 | T3 | `gate_a_qualification.py`: `--baseline`、成功条件ごとの通過率の比較表、閾値に対する必要成功数（n=200: 0.95→197、0.90→189）、`--threshold` 省略時は比較のみ。docstring の held-out 表記を修正。`compare_seeds.py` を任意個の `--reports` と `--baseline` に一般化 | `tests/test_gate_a_qualification.py` |
 | T5 | 学習時 make_policy・評価(diagnostics/gate0)・visualize_rl・ONNX グラフの式の決定論行動が一致 | 4経路とも max\|Δa\| < 1e-5（`tests/test_policy_inference_paths.py`）。ONNX 実グラフの検証は onnx/onnxruntime 未導入のため skip のまま |
 | T6 | `.gitignore` に `log/**/*.pkl` | 既に追跡中の pkl（log/gate_a_seed1, gate_a_v2, smoke_test/version_0）は追跡を外していない（人間判断）。docs のバージョン表記は前回更新済み |
+| Gate A 判定修正 | ゼロ行動ベースライン（200本×4条件、`log/gate0_formal/baseline_.json`）で両足接地の通過率が 24% しかなく、他の条件は全て100%。接地切れは全て step 1〜13（spawn 直後の荷重立ち上がり、reset時のFSRは0N）で step 30 以降は 0/40。人間判断で、両足接地の判定から reset 直後 30 step を除外（`GATE_A_CONTACT_SETTLE_STEPS`）。評価のみの変更で学習には影響しない | `tests/test_phase0_eval_diagnostics.py` |
 | T1 | `run_manifest.json` に pip freeze・jaxlib/mujoco-mjx 等のバージョン・解決済み引数・RobotConfig 全定数と SHA-256 を追加。`--allow-dirty` も受け付ける | `tests/test_seed_readiness.py` |
 
 ## 2026-10-02: 3seed学習(Gate A)前の追加レビュー対応
