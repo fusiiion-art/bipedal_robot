@@ -1,0 +1,425 @@
+{
+  "generated_at": "2026-10-03T02:10:21.549725+00:00",
+  "checkpoint": "zero-policy",
+  "zero_policy": true,
+  "eval_seed": 1000,
+  "max_steps": 500,
+  "gate_a_thresholds": {
+    "max_tilt_deg": 10.0,
+    "max_foot_translation_m": 0.02,
+    "max_torque_saturation_rate": 0.01,
+    "max_rel_height_drop_m": 0.02,
+    "illegal_contact_consecutive_steps": 2
+  },
+  "note_initial_state_randomization": "全セルで初期状態分布(master_plan.md §1.6)を適用: 関節角 ±0.05 rad, 関節角速度 ±0.2 rad/s。'fixed_dr'/'randomized_dr' は質量/摩擦/重心オフセット/サーボ温度/電圧のdomain randomizationのon/off。",
+  "note_termination_reasons": "現行実装(envs/mjx_rewards.py)はfallen_roll/fallen_pitch/fallen_height/time_limitのみをterminationとして判定する。no_illegal_contact/slip_ok/torque_ok/height_ok/uprightはterminationではなく、本スクリプトのsuccess判定(master_plan.md §0.3の論理積、criteria_pass_rate)で評価する。",
+  "conditions": {
+    "deterministic__fixed_dr": {
+      "n_episodes": 3,
+      "n_unique_final_states": 3,
+      "episode_alive": {
+        "mean": 500.0,
+        "std": 0.0,
+        "min": 500.0,
+        "max": 500.0,
+        "n": 3
+      },
+      "termination_reason_counts": {
+        "time_limit": 3
+      },
+      "termination_reason_rate": {
+        "time_limit": 1.0
+      },
+      "kaplan_meier": {
+        "times": [
+          0
+        ],
+        "survival": [
+          1.0
+        ]
+      },
+      "failure_timing_diagnosis": {
+        "classification": "no_failures",
+        "suggested_action": "terminatedによる失敗episodeが観測されなかった。time-limit到達のみであれば§3.3(truncation/termination処理)の疑いは後退し、他の症状(KLスパイク等)の切り分けを優先する。",
+        "normalized_mean": null,
+        "early_rate": null,
+        "late_rate": null
+      },
+      "success_rate": 0.3333333333333333,
+      "n_successes": 1,
+      "criteria_pass_rate": {
+        "alive": 1.0,
+        "both_feet_contact": 0.3333333333333333,
+        "upright": 1.0,
+        "slip_ok": 1.0,
+        "torque_ok": 1.0,
+        "height_ok": 1.0,
+        "no_illegal_contact": 1.0,
+        "success": 0.3333333333333333
+      },
+      "max_tilt_deg_max": 1.4535195464925952,
+      "rel_height_drop_max_m": 0.000321805477142334,
+      "illegal_contact_episode_count": 0,
+      "foot_displacement_m": {
+        "p50": 0.004085406195372343,
+        "p95": 0.006047961767762899,
+        "max": 0.006266023498028517
+      },
+      "action_change_rms": {
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "joint_vel_rms_rad_s": {
+        "p50": 0.041459770051947745,
+        "p95": 0.04318491684664637,
+        "max": 0.043376599823835106
+      },
+      "both_feet_contact_rate": 0.3333333333333333,
+      "max_foot_displacement_m": 0.006266023498028517,
+      "max_foot_displacement_since_settling_m": 0.0007539493963122368,
+      "note_foot_displacement_since_settling": "settling_steps=50制御step経過後を基準点にした補助指標。successの正式判定には使わない(診断専用、§0.3準拠でrobot/config.pyのMAX_FOOT_TRANSLATIONは変更していない)。max_foot_displacement_mとの差が大きい場合、reset直後の沈み込み/姿勢確立が主因である可能性が高い。",
+      "max_roll_deg": 1.410993285345928,
+      "max_pitch_deg": 0.34905927213273463,
+      "recovery_time_steps": [],
+      "recovery_time_mean_steps": null,
+      "torque_saturation_rate_mean": 0.0,
+      "reward_component_means": {
+        "action_saturation": 0.0,
+        "alive": 1.0,
+        "barrier_height": 0.0014076190123463068,
+        "barrier_torque": 0.0,
+        "both_feet_contact": 0.996,
+        "cbf_correction_norm": 0.0,
+        "curriculum_scale": 1.0,
+        "disturbance_recovery_bonus": 0.0,
+        "fall_penalty": 0.0,
+        "foot_balance": 0.9780219517151515,
+        "foot_displacement": 0.004046842279810031,
+        "lambda_phase": 0.9940358491539955,
+        "pbrs_reward": -0.15972926321377356,
+        "physics_diverged": 0.0,
+        "potential": 15.97215033086141,
+        "r_com_stab": 0.9990225019454956,
+        "r_cp": 0.9426563860575358,
+        "r_recovery": 0.00020083162771133444,
+        "r_upright": 0.9983573210239411,
+        "reward": 74.43084068044027,
+        "reward_is_finite": 1.0,
+        "stability_index": 0.7685068093041579,
+        "stability_metrics_finite": 1.0,
+        "total_penalty": 0.050268319051091866,
+        "total_reward": 74.43084068044027,
+        "zmp_margin": 0.8272172347108523
+      },
+      "collapse_examples": []
+    },
+    "deterministic__randomized_dr": {
+      "n_episodes": 200,
+      "n_unique_final_states": 200,
+      "episode_alive": {
+        "mean": 500.0,
+        "std": 0.0,
+        "min": 500.0,
+        "max": 500.0,
+        "n": 200
+      },
+      "termination_reason_counts": {
+        "time_limit": 200
+      },
+      "termination_reason_rate": {
+        "time_limit": 1.0
+      },
+      "kaplan_meier": {
+        "times": [
+          0
+        ],
+        "survival": [
+          1.0
+        ]
+      },
+      "failure_timing_diagnosis": {
+        "classification": "no_failures",
+        "suggested_action": "terminatedによる失敗episodeが観測されなかった。time-limit到達のみであれば§3.3(truncation/termination処理)の疑いは後退し、他の症状(KLスパイク等)の切り分けを優先する。",
+        "normalized_mean": null,
+        "early_rate": null,
+        "late_rate": null
+      },
+      "success_rate": 0.24,
+      "n_successes": 48,
+      "criteria_pass_rate": {
+        "alive": 1.0,
+        "both_feet_contact": 0.24,
+        "upright": 1.0,
+        "slip_ok": 1.0,
+        "torque_ok": 1.0,
+        "height_ok": 1.0,
+        "no_illegal_contact": 1.0,
+        "success": 0.24
+      },
+      "max_tilt_deg_max": 2.728601822714394,
+      "rel_height_drop_max_m": 0.0014795660972595215,
+      "illegal_contact_episode_count": 0,
+      "foot_displacement_m": {
+        "p50": 0.004433390684425831,
+        "p95": 0.009424914140254256,
+        "max": 0.011914297007024288
+      },
+      "action_change_rms": {
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "joint_vel_rms_rad_s": {
+        "p50": 0.03819005357240873,
+        "p95": 0.044967718243382054,
+        "max": 0.047558543092984386
+      },
+      "both_feet_contact_rate": 0.24,
+      "max_foot_displacement_m": 0.011914297007024288,
+      "max_foot_displacement_since_settling_m": 0.0009989625541493297,
+      "note_foot_displacement_since_settling": "settling_steps=50制御step経過後を基準点にした補助指標。successの正式判定には使わない(診断専用、§0.3準拠でrobot/config.pyのMAX_FOOT_TRANSLATIONは変更していない)。max_foot_displacement_mとの差が大きい場合、reset直後の沈み込み/姿勢確立が主因である可能性が高い。",
+      "max_roll_deg": 2.7254559340388886,
+      "max_pitch_deg": 1.2259514011775292,
+      "recovery_time_steps": [],
+      "recovery_time_mean_steps": null,
+      "torque_saturation_rate_mean": 0.0,
+      "reward_component_means": {
+        "action_saturation": 0.0,
+        "alive": 1.0,
+        "barrier_height": 0.0007556767220273019,
+        "barrier_torque": 0.0,
+        "both_feet_contact": 0.99453,
+        "cbf_correction_norm": 0.0,
+        "curriculum_scale": 1.0,
+        "disturbance_recovery_bonus": 0.0,
+        "fall_penalty": 0.0,
+        "foot_balance": 0.8720953701525928,
+        "foot_displacement": 0.004617886072570727,
+        "lambda_phase": 0.9934637631685368,
+        "pbrs_reward": -0.1596998792834938,
+        "physics_diverged": 0.0,
+        "potential": 15.96905622571945,
+        "r_com_stab": 0.9989769467562436,
+        "r_cp": 0.9480486028605699,
+        "r_recovery": 0.00022400328526212695,
+        "r_upright": 0.9979485673731565,
+        "reward": 73.78299139175415,
+        "reward_is_finite": 1.0,
+        "stability_index": 0.7462684395233541,
+        "stability_metrics_finite": 1.0,
+        "total_penalty": 0.05257172522613313,
+        "total_reward": 73.78299139175415,
+        "zmp_margin": 0.8258106154214312
+      },
+      "collapse_examples": []
+    },
+    "stochastic__fixed_dr": {
+      "n_episodes": 200,
+      "n_unique_final_states": 200,
+      "episode_alive": {
+        "mean": 500.0,
+        "std": 0.0,
+        "min": 500.0,
+        "max": 500.0,
+        "n": 200
+      },
+      "termination_reason_counts": {
+        "time_limit": 200
+      },
+      "termination_reason_rate": {
+        "time_limit": 1.0
+      },
+      "kaplan_meier": {
+        "times": [
+          0
+        ],
+        "survival": [
+          1.0
+        ]
+      },
+      "failure_timing_diagnosis": {
+        "classification": "no_failures",
+        "suggested_action": "terminatedによる失敗episodeが観測されなかった。time-limit到達のみであれば§3.3(truncation/termination処理)の疑いは後退し、他の症状(KLスパイク等)の切り分けを優先する。",
+        "normalized_mean": null,
+        "early_rate": null,
+        "late_rate": null
+      },
+      "success_rate": 0.245,
+      "n_successes": 49,
+      "criteria_pass_rate": {
+        "alive": 1.0,
+        "both_feet_contact": 0.245,
+        "upright": 1.0,
+        "slip_ok": 1.0,
+        "torque_ok": 1.0,
+        "height_ok": 1.0,
+        "no_illegal_contact": 1.0,
+        "success": 0.245
+      },
+      "max_tilt_deg_max": 2.432664041658932,
+      "rel_height_drop_max_m": 0.0014744102954864502,
+      "illegal_contact_episode_count": 0,
+      "foot_displacement_m": {
+        "p50": 0.004432016285136342,
+        "p95": 0.00913336579687893,
+        "max": 0.013403129763901234
+      },
+      "action_change_rms": {
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "joint_vel_rms_rad_s": {
+        "p50": 0.03842876391440142,
+        "p95": 0.04506483105597572,
+        "max": 0.04770344775057804
+      },
+      "both_feet_contact_rate": 0.245,
+      "max_foot_displacement_m": 0.013403129763901234,
+      "max_foot_displacement_since_settling_m": 0.0009193532168865204,
+      "note_foot_displacement_since_settling": "settling_steps=50制御step経過後を基準点にした補助指標。successの正式判定には使わない(診断専用、§0.3準拠でrobot/config.pyのMAX_FOOT_TRANSLATIONは変更していない)。max_foot_displacement_mとの差が大きい場合、reset直後の沈み込み/姿勢確立が主因である可能性が高い。",
+      "max_roll_deg": 2.415639620504168,
+      "max_pitch_deg": 1.2211839291368602,
+      "recovery_time_steps": [],
+      "recovery_time_mean_steps": null,
+      "torque_saturation_rate_mean": 0.0,
+      "reward_component_means": {
+        "action_saturation": 0.0,
+        "alive": 1.0,
+        "barrier_height": 0.0011373877653702343,
+        "barrier_torque": 0.0,
+        "both_feet_contact": 0.99501,
+        "cbf_correction_norm": 0.0,
+        "curriculum_scale": 1.0,
+        "disturbance_recovery_bonus": 0.0,
+        "fall_penalty": 0.0,
+        "foot_balance": 0.9462077806532383,
+        "foot_displacement": 0.004639880176123479,
+        "lambda_phase": 0.993976564863252,
+        "pbrs_reward": -0.15972483882734204,
+        "physics_diverged": 0.0,
+        "potential": 15.9716591189003,
+        "r_com_stab": 0.9990228339147568,
+        "r_cp": 0.942394479330778,
+        "r_recovery": 0.00019417092678099442,
+        "r_upright": 0.9984328644841909,
+        "reward": 74.24465125255585,
+        "reward_is_finite": 1.0,
+        "stability_index": 0.7605003312877565,
+        "stability_metrics_finite": 1.0,
+        "total_penalty": 0.051593026890918846,
+        "total_reward": 74.24465125255585,
+        "zmp_margin": 0.8277022440712155
+      },
+      "collapse_examples": []
+    },
+    "stochastic__randomized_dr": {
+      "n_episodes": 200,
+      "n_unique_final_states": 200,
+      "episode_alive": {
+        "mean": 500.0,
+        "std": 0.0,
+        "min": 500.0,
+        "max": 500.0,
+        "n": 200
+      },
+      "termination_reason_counts": {
+        "time_limit": 200
+      },
+      "termination_reason_rate": {
+        "time_limit": 1.0
+      },
+      "kaplan_meier": {
+        "times": [
+          0
+        ],
+        "survival": [
+          1.0
+        ]
+      },
+      "failure_timing_diagnosis": {
+        "classification": "no_failures",
+        "suggested_action": "terminatedによる失敗episodeが観測されなかった。time-limit到達のみであれば§3.3(truncation/termination処理)の疑いは後退し、他の症状(KLスパイク等)の切り分けを優先する。",
+        "normalized_mean": null,
+        "early_rate": null,
+        "late_rate": null
+      },
+      "success_rate": 0.24,
+      "n_successes": 48,
+      "criteria_pass_rate": {
+        "alive": 1.0,
+        "both_feet_contact": 0.24,
+        "upright": 1.0,
+        "slip_ok": 1.0,
+        "torque_ok": 1.0,
+        "height_ok": 1.0,
+        "no_illegal_contact": 1.0,
+        "success": 0.24
+      },
+      "max_tilt_deg_max": 2.728601822714394,
+      "rel_height_drop_max_m": 0.0014795660972595215,
+      "illegal_contact_episode_count": 0,
+      "foot_displacement_m": {
+        "p50": 0.004433390684425831,
+        "p95": 0.009424914140254256,
+        "max": 0.011914297007024288
+      },
+      "action_change_rms": {
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "joint_vel_rms_rad_s": {
+        "p50": 0.03819005357240873,
+        "p95": 0.044967718243382054,
+        "max": 0.047558543092984386
+      },
+      "both_feet_contact_rate": 0.24,
+      "max_foot_displacement_m": 0.011914297007024288,
+      "max_foot_displacement_since_settling_m": 0.0009989625541493297,
+      "note_foot_displacement_since_settling": "settling_steps=50制御step経過後を基準点にした補助指標。successの正式判定には使わない(診断専用、§0.3準拠でrobot/config.pyのMAX_FOOT_TRANSLATIONは変更していない)。max_foot_displacement_mとの差が大きい場合、reset直後の沈み込み/姿勢確立が主因である可能性が高い。",
+      "max_roll_deg": 2.7254559340388886,
+      "max_pitch_deg": 1.2259514011775292,
+      "recovery_time_steps": [],
+      "recovery_time_mean_steps": null,
+      "torque_saturation_rate_mean": 0.0,
+      "reward_component_means": {
+        "action_saturation": 0.0,
+        "alive": 1.0,
+        "barrier_height": 0.0007556767220273019,
+        "barrier_torque": 0.0,
+        "both_feet_contact": 0.99453,
+        "cbf_correction_norm": 0.0,
+        "curriculum_scale": 1.0,
+        "disturbance_recovery_bonus": 0.0,
+        "fall_penalty": 0.0,
+        "foot_balance": 0.8720953701525928,
+        "foot_displacement": 0.004617886072570727,
+        "lambda_phase": 0.9934637631685368,
+        "pbrs_reward": -0.1596998792834938,
+        "physics_diverged": 0.0,
+        "potential": 15.96905622571945,
+        "r_com_stab": 0.9989769467562436,
+        "r_cp": 0.9480486028605699,
+        "r_recovery": 0.00022400328526212695,
+        "r_upright": 0.9979485673731565,
+        "reward": 73.78299139175415,
+        "reward_is_finite": 1.0,
+        "stability_index": 0.7462684395233541,
+        "stability_metrics_finite": 1.0,
+        "total_penalty": 0.05257172522613313,
+        "total_reward": 73.78299139175415,
+        "zmp_margin": 0.8258106154214312
+      },
+      "collapse_examples": []
+    }
+  },
+  "disturbance_model": {
+    "force_levels_N": [],
+    "mechanism": "各control stepで独立に3%の確率でpush発火。方向はx:[-0.5,0.5], y:[-1.0,1.0], z:[-0.2,0.2]から一様サンプルして正規化した3軸連続方向(離散方位ではない)。1回のpushはCONTROL_DT(1 control step)のみqfrc_appliedへ印加される(envs/mjx_env.py 参照)。",
+    "push_trigger_probability_per_step": 0.03,
+    "control_dt_s": 0.01,
+    "impulse_per_trigger_Ns": []
+  }
+}
