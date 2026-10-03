@@ -1,0 +1,13 @@
+{
+  "mode": "zero_action_mjx",
+  "seed": 0,
+  "requested_seconds": 10.0,
+  "simulated_steps": 1000,
+  "simulated_seconds": 10.0,
+  "terminated_step": null,
+  "max_abs_roll_deg": 1.118980606934786,
+  "max_abs_pitch_deg": 0.5848326531656675,
+  "rms_roll_deg": 0.6424451261446056,
+  "rms_pitch_deg": 0.04298685816069972,
+  "pass": true
+}

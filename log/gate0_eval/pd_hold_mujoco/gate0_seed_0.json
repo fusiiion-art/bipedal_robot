@@ -1,0 +1,14 @@
+{
+  "mode": "pd_hold_mujoco",
+  "seed": 0,
+  "requested_seconds": 10.0,
+  "simulated_steps": 1000,
+  "simulated_seconds": 10.0,
+  "terminated_step": null,
+  "max_abs_roll_deg": 0.7679269860185822,
+  "max_abs_pitch_deg": 0.0005198129198451222,
+  "rms_roll_deg": 0.7437480557717543,
+  "rms_pitch_deg": 0.0005016182082379486,
+  "torque_saturation_rate": 0.0,
+  "pass": true
+}

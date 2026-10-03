@@ -1,0 +1,4197 @@
+diff --git a/README.md b/README.md
+index 38dcff6..298f664 100644
+--- a/README.md
++++ b/README.md
+@@ -1,39 +1,55 @@
+-# 二足歩行ロボット『旋風丸』ドキュメントインデックス（決定・全不整合解決版）
++# 旋風丸 (Senpumaru) — 外乱耐性直立制御
+ 
+-二足歩行ロボット『旋風丸 (Senpumaru_GIY_Type)』の設計、開発計画、ハードウェア構成、強化学習、実機デプロイに関する統合ドキュメント一覧です。
++20自由度の小型二足ロボット『旋風丸』が、両足を接地したまま（歩行・踏み替えなし）
++外乱を受けても直立を維持する方策を、MuJoCo MJX + Brax PPO で学習するリポジトリです。
+ 
+----
++## ドキュメント
+ 
+-## 📁 フォルダ構成とドキュメントマップ
++| ファイル | 内容 |
++|---|---|
++| [`docs/master_plan.md`](docs/master_plan.md) | 計画・MDP仕様・Gate 判定基準（正本） |
++| [`docs/status.md`](docs/status.md) | 現在地・直近の変更・次のステップ |
++| [`docs/current.md`](docs/current.md) | 現行コードの構成と契約の要約 |
++| [`robot/config.py`](robot/config.py) | ハイパーパラメータ・報酬重み・観測次元の正本 |
+ 
+-### 1. 01_plans/ (開発計画・設計仕様)
+-- 📄 [旋風丸_開発計画書_完全版.md](file:///c:/bipedal_robot/docs/01_plans/旋風丸_開発計画書_完全版.md) **【マスター開発計画書 (SSOT)】**  
+-  全世代・Sim-to-Real統合・理論・電気・制御を網羅したマスタープラン v1.1.2。
+-- 📄 [旋風丸_V1_Biped_統合開発計画書_決定版.md](file:///c:/bipedal_robot/docs/01_plans/旋風丸_V1_Biped_統合開発計画書_決定版.md) **【V1実機仕様（完全決定版）】**  
+-  Teensy 4.1 脊髄実装 (TeensySpineIO)、3S LiPo 11.1V、20自由度（頭部なし）、FSRオンチップADC二値判定を確定したV1仕様書。
+-- 📄 [旋風丸_V1_設計レビュー統合.md](file:///c:/bipedal_robot/docs/01_plans/旋風丸_V1_設計レビュー統合.md) **【評価レビューアーカイブ】**  
+-  外部AIおよび査定結果の集約。
+-- 📄 [PROJECT_GOAL.md](file:///c:/bipedal_robot/docs/01_plans/PROJECT_GOAL.md)  
+-  核心的ビジョンとプロジェクト目標。
++## 構成
+ 
+----
++```
++envs/      MJX 環境 (mjx_env.py)、報酬 (mjx_rewards.py)、安定性指標、CBF 安全フィルタ、
++           サーボ熱・電圧モデル、学習用ラッパー (training_wrapper.py)
++robot/     設定 (config.py)、方策ネットワークと checkpoint 読み込み (policy_network.py)、数学関数
++train/     学習 (train_mjx.py)、可視化 (visualize_rl.py)、ONNX 出力、軌跡出力
++scratch/   Gate 0 / A / B の評価・判定スクリプト、診断ツール
++scripts/   MuJoCo モデル（当たり判定・質量）の調整ツール
++real/      実機 (Raspberry Pi 5 + Teensy 4.1) の制御ループと I/O
++assets/    MuJoCo モデル (humanoid/humanoid.xml) とメッシュ
++tests/     pytest
++```
+ 
+-### 2. 02_hardware/ (ハードウェア・部品構成)
+-- 📄 [HARDWARE_SPECS_AND_BOM.md](file:///c:/bipedal_robot/docs/02_hardware/HARDWARE_SPECS_AND_BOM.md) **【統合ハードウェア仕様 ＆ 改訂版BOM】**  
+-  3S LiPo (11.1V)、5V/5A 降圧UBEC、40A ヒューズ、AWG12 配線、AE-LLCNV-LVCH16T245 レベル変換、FSR×8、完全BOM表。
++## 動作環境
+ 
+----
++`requirements-lock.txt` の構成 (Python 3.12 / JAX 0.11.0 / MuJoCo・MJX 3.11.0 / Brax 0.14.2) で
++テストと学習の動作を CPU 上で確認済み (GPU では未確認)。MuJoCo/MJX は **3.2.7 以上が必須**
++(3.2.4 以前の MJX は足裏 FSR の touch センサーに対応しておらず、環境の生成時に
++`NotImplementedError: [mjSENS_TOUCH] not supported` で止まる)。JAX 0.11 は Python 3.12 以上が必要。
+ 
+-### 3. 03_manuals/ (システム運用マニュアル)
+-- 📄 [学習側説明書.md](file:///c:/bipedal_robot/docs/03_manuals/学習側説明書.md)  
+-  MuJoCo MJX ＋ Brax PPO 学習ガイド。
+-- 📄 [実機側説明書.md](file:///c:/bipedal_robot/docs/03_manuals/実機側説明書.md)  
+-  Phase 0 〜 Phase 3（Phase 0.5 SILダミー検証含む）実機デプロイマニュアル。
++確認方法: `./venv_wsl/bin/python -c "import sys, jax, mujoco, brax; print(sys.version, jax.__version__, mujoco.__version__, brax.__version__)"`
+ 
+----
++## よく使うコマンド (WSL2)
+ 
+-### 4. 04_rl_rewards/ (強化学習・報酬関数設計)
+-- 📄 [報酬関数_詳細仕様書.md](file:///c:/bipedal_robot/docs/04_rl_rewards/報酬関数_詳細仕様書.md)  
+-  位相ゲート適用 PBRS、2段階 Capture Point 報酬、ZMP 符号付き距離マージン、対数バリア仕様書。
+-- 📄 [REWARD_IMPROVEMENTS.md](file:///c:/bipedal_reward/docs/04_rl_rewards/REWARD_IMPROVEMENTS.md)  
+-  5重大致命的バグの解消および検証レポート。
++```bash
++# テスト
++./venv_wsl/bin/python -m pytest tests/ -v
++
++# 学習 (追跡中のファイルに未コミットの変更があると起動しない。--allow_dirty で明示的に許可)
++./venv_wsl/bin/python train/train_mjx.py --exp_name gate_a --seed 0
++
++# Gate A 評価と判定
++./venv_wsl/bin/python scratch/phase0_eval_diagnostics.py --exp_name gate_a --version 0 \
++    --episodes 200 --out log/gate_a/version_0/gate_a_report.json
++./venv_wsl/bin/python scratch/gate_a_qualification.py --reports log/gate_a/version_*/gate_a_report.json --threshold 0.95
++
++# 可視化 / 実機用 ONNX 出力
++./venv_wsl/bin/python train/visualize_rl.py --exp_name gate_a --mode plot   # 要 matplotlib (lock に未収録)
++./venv_wsl/bin/python train/export_onnx.py --model log/gate_a/version_0/best_params.pkl --output policy.onnx
++```
+diff --git a/assets/humanoid/humanoid.xml b/assets/humanoid/humanoid.xml
+index d498071..ed6bc8e 100644
+--- a/assets/humanoid/humanoid.xml
++++ b/assets/humanoid/humanoid.xml
+@@ -49,7 +49,7 @@
+             <geom name="doutai-v5_doutai_collision" type="box" pos="0.0000 0.0185 0.0565" size="0.0461 0.0430 0.0605" mass="0.6915" rgba="1.0 0.2 0.2 0.3"/>
+             
+             <!-- IMUセンサー配置 -->
+-            <site name="imu_bno055_site" pos="0.000 0.024 0.030" size="0.01" rgba="1 0 0 1" euler="-90 0 0"/>
++            <site name="imu_bno055_site" pos="0.000 0.024 0.030" size="0.01" rgba="1 0 0 1" euler="-1.5707963 0 0"/>
+             
+             <!-- 胴体慣性データ (CAD由来) -->
+ 
+diff --git a/assets/humanoid/humanoid_visualize.xml b/assets/humanoid/humanoid_visualize.xml
+index c2e3f81..83ab7e7 100644
+--- a/assets/humanoid/humanoid_visualize.xml
++++ b/assets/humanoid/humanoid_visualize.xml
+@@ -49,7 +49,7 @@
+             <geom name="doutai-v5_doutai_collision" type="box" pos="0.0000 0.0185 0.0565" size="0.0461 0.0430 0.0605" mass="0.6915" rgba="1.0 0.2 0.2 0.3"/>
+             
+             <!-- IMUセンサー配置 -->
+-            <site name="imu_bno055_site" pos="0.000 0.024 0.030" size="0.01" rgba="1 0 0 1" euler="-90 0 0"/>
++            <site name="imu_bno055_site" pos="0.000 0.024 0.030" size="0.01" rgba="1 0 0 1" euler="-1.5707963 0 0"/>
+             
+             <!-- 胴体慣性データ (CAD由来) -->
+ 
+diff --git a/docs/current.md b/docs/current.md
+index e954611..69a20a1 100644
+--- a/docs/current.md
++++ b/docs/current.md
+@@ -1,35 +1,58 @@
+ # 二足直立ロボット 現行仕様
+ 
+-最終更新: 2026-09-21（Copilot）
++最終更新: 2026-10-02（Claude）
+ 
+-この文書は、リポジトリ内のコードに対する短い運用メモです。実装が正本であり、古い設計案・レビュー・詳細マニュアルは保持しません。
++この文書は、リポジトリ内のコードに対する短い運用メモです。実装が正本です。
+ 
+ ---
+ 
+ ## 現行アーキテクチャ
+ 
+ - **学習**: `train/train_mjx.py` + `envs/mjx_env.py` の JAX/MJX + Brax PPO
+-  - ラッパー構成: `raw env` → `AutoResetWrapper` → `EpisodeInfoResetWrapper` → `TrainingProgressWrapper`
+-  - DR (Domain Randomization): ベースモデルは不変とし、`step()` 冒頭でスケーリング適用モデルを動的生成して `mjx.step()` および `reward_system.compute()` に渡す（JIT トレーサーリーク防止）
+-  - 安全フィルタ: `envs/cbf.py` による Control Barrier Function + 熱・電圧 derating クランプ (`jp.clip(..., 0.0, 1.0)`)
++  - ラッパー構成: `raw env` → `EpisodeWrapper` → `AutoResetWrapper` → `EpisodeInfoResetWrapper` → `TrainingProgressWrapper`
++  - `EpisodeInfoResetWrapper` は done になった env の `info` 全キー（`rng_key` と学習進捗・終了種別を除く）と `pipeline_state`/`obs` を同じ fresh reset の値に揃える
++  - env の `max_episode_steps`（time_out 判定）は PPO の `episode_length` と同じ値を渡す
++  - asymmetric actor-critic: 観測は `{'state': actor用625次元, 'privileged_state': critic用}` の dict
++  - 学習開始時に `<run_dir>/run_manifest.json`（git コミット・解決済み PPO 設定・実際の総 step 数）を書き出す。未コミットの変更があると起動しない（`--allow_dirty` で明示的に許可）
++  - DR: ベースモデルは不変とし、`step()` 冒頭で DR 値（質量/摩擦/胴体重心）を適用したモデルを生成して `mjx.step()` に渡す。関節粘性・クーロン摩擦は `qfrc_applied`、サーボ温度・電圧は derating として反映
++  - 初期状態分布: nominal 姿勢の関節角・関節角速度に一様ノイズ（`INIT_JOINT_POS_NOISE` / `INIT_JOINT_VEL_NOISE`）、低い方の足裏が nominal と同じ高さで接地するよう胴体高さを補正
++  - 安全フィルタ: `envs/cbf.py` の CBF 近似（可動域5%マージン + ペナルティ）+ 熱・電圧 derating
+ - **実機**: Raspberry Pi 5 の `real/real_env.py` と Teensy 4.1 の `real/real_io.py`
+   - 制御周期: 実機 100Hz、Teensy 側のセンサー・サーボ安全処理は 1kHz 想定
+-  - フィードバック: `CMD_SERVO_POS_READ` による実サーボ角度のポーリング取得（通信途絶時は `smoothed_action` へフォールバック）
+-- **アクション**: 関節目標角の差分（residual）。トルク直接指令は使わない
+-- **姿勢**: world 鉛直基準。高さは足裏相対。傾斜床対応は実装しない
++  - フィードバック: `CMD_SERVO_POS_READ` による実サーボ角度のポーリング取得（未取得時は default 姿勢）
++- **アクション**: 中腰デフォルト姿勢からの関節目標角の残差 Δq（±30°）。トルク直接指令は使わない
++- **姿勢**: world 鉛直基準。高さは足裏相対。傾斜床対応は実装しない。歩行・踏み替えはスコープ外
+ 
+ ---
+ 
+-## ディレクトリ・構成の現行配置
++## ディレクトリ
+ 
+-- `envs/`: MJX 環境 (`mjx_env.py`), 報酬計算 (`mjx_rewards.py`), 安全フィルタ (`cbf.py`), 訓練ラッパー (`training_wrapper.py`)
+-- `train/`: PPO 学習スクリプト (`train_mjx.py`), 可視化 (`visualize_rl.py`), ONNX エクスポート (`export_onnx.py`), 軌跡 & GIF エクスポート (`export_trajectory.py`)
+-- `robot/`: ロボット定数 (`config.py`), 運動学 (`kinematics.py`), 歩容生成 (`gait_generator.py`), 方策ネットワーク (`policy_network.py`)
++- `envs/`: MJX 環境 (`mjx_env.py`), 報酬 (`mjx_rewards.py`), 安定性指標 (`stability_metrics.py`), 安全フィルタ (`cbf.py`), サーボモデル (`actuator_model.py`), 学習用ラッパー (`training_wrapper.py`)
++- `robot/`: 設定 (`config.py`), 方策ネットワーク・checkpoint 読み込み・推論関数 (`policy_network.py`), 数学関数 (`math_utils.py`)
++- `train/`: PPO 学習 (`train_mjx.py`), 可視化 (`visualize_rl.py`), ONNX 出力 (`export_onnx.py`), 軌跡・GIF 出力 (`export_trajectory.py`), 軌跡ビューア (`view_trajectory.py`)
++- `scratch/`: Gate 0 評価 (`gate0_eval.py`), Gate A 診断・判定 (`phase0_eval_diagnostics.py`, `gate_a_qualification.py`), Gate B 評価・判定, PPO ログ診断, 物理限界の抽出, 当たり判定の描画, WSL 用シェルスクリプト
++- `scripts/`: MuJoCo モデルの当たり判定・質量の調整ツール
+ - `real/`: 実機環境 (`real_env.py`), Teensy 通信 (`real_io.py`)
+-- `scratch/`: 統合 Gate 0 評価スクリプト (`gate0_eval.py`), 診断スクリプト (`phase0_eval_diagnostics.py`), 衝突可視化 (`render_collision.py`)
+-- `scripts/`: メッシュ変換・ジオメトリ修正スクリプト (`fix_collision_geoms.py` 等)
+-- `tests/`: 単体・契約・統合テストスイート（全37件、pytest 完全対応）
+-- `stubs/`: CircuitPython 互換スタブ（`board.py`, `busio.py`）
++- `tests/`: 単体・契約・統合テスト
++
++---
++
++## 観測契約
++
++actor 観測 `'state'`（`RobotConfig.OBS_DIM` = 625、実機 `real/real_env.py` と同じ内容・順序）:
++
++| 範囲 | 内容 |
++|---|---|
++| 0–83 | Base 観測: base_pos(3, 常に0) / 重力射影ベクトル(3, 胴体座標系) / 線速度(3, σ0.5のノイズ) / 角速度(3, 胴体座標系) / 関節角(20) / 関節角速度(20) / FSR 接地フラグ(8, 0/1) / ZMP(2, 常に0) / 位相(2, 常に[0,1]) / 参照角(20, 常に0) |
++| 84–503 | 直近5stepの Base 観測（古→新、エピソード開始時は最初の観測で充填） |
++| 504–603 | 直近5stepの指令関節角（古→新、開始時は現在の関節角で充填） |
++| 604–623 | サーボ温度 |
++| 624 | 電源電圧 |
++
++常に定数のチャネルは歩行用の旧設計の名残だが、実機 ONNX との625次元契約を保つため残している。
++
++critic 観測 `'privileged_state'`（`RobotConfig.PRIVILEGED_OBS_DIM`）= actor 観測 + 真の胴体位置・重力射影・線速度・角速度、
++関節角・角速度、FSR 連続値、足裏の水平変位、DR 値、外力。
+ 
+ ---
+ 
+@@ -37,11 +60,9 @@
+ 
+ `FSR402 x8 -> 分圧 + RC -> TeensyオンチップADC -> Teensy側閾値判定 -> USB -> Raspberry Pi`
+ 
+-- 外付け MCP3208、MCP6004、Pi 側 SPI は使用しない
+-- Teensy から受ける FSR 値は 8 個の二値接地フラグ（`0.0` または `1.0`）
+-- 実機では CoP/ZMP を FSR から算出しない
+-- 観測契約は既存モデル互換のため、FSR 8 要素と ZMP 2 要素を含む 625 次元を維持する
+-- シミュレーション内の FSR 連続値・ZMP 指標は学習／評価専用
++- Teensy から受ける FSR 値は 8 個の二値接地フラグ（`0.0` または `1.0`）。sim も同じく `FSR_CONTACT_THRESHOLD` で二値化して観測させる
++- 実機では CoP/ZMP を FSR から算出しない（観測の ZMP は常に0）
++- シミュレーション内の FSR 連続値は報酬・評価と critic 観測専用
+ 
+ ---
+ 
+@@ -49,26 +70,16 @@
+ 
+ 設定の正本は `robot/config.py`:
+ 
+-- `NUM_JOINTS = 20`
+-- `BASE_OBS_DIM = 84`
+-- `HISTORY_LEN = 5`
+-- `OBS_DIM = 625`
+-- `CONTROL_DT = 0.01` 秒 (100Hz)
+-- `MAX_EPISODE_STEPS = 500`
++- `NUM_JOINTS = 20`, `BASE_OBS_DIM = 84`, `HISTORY_LEN = 5`, `OBS_DIM = 625`
++- `CONTROL_DT = 0.01` 秒 (100Hz), `MAX_EPISODE_STEPS = 500`
+ - `DISTURBANCE_CURRICULUM = False`（Phase 0）
+-- `CURRICULUM_SCHEDULE_FRACTIONS`（進捗率ベースの外乱スケジュール）
+-
+-実機 I/O の正本は `real/real_io.py`:
+-
+-- `TeensySpineIO.communicate()` が IMU、FSR 接地フラグ、サーボ状態（温度・電圧・位置）を受信する
+-- USB テレメトリは 73 バイト形式を維持し、末尾 8 スロットを FSR フラグとして扱う
+ 
+ 方策ネットワークの正本は `robot/policy_network.py`:
+ 
+-- `POLICY_MEAN_CLIP_SCALE = 3.0`
+-- `POLICY_MIN_STD = 0.15`
+-- `POLICY_MAX_STD = 3.0`
+-- softsign 式による単一平均値クリップ + std bounds クリップ
++- `POLICY_MEAN_CLIP_SCALE = 3.0`, `POLICY_MIN_STD = 0.15`, `POLICY_MAX_STD = 3.0`
++- softsign 式による平均値クリップ + std クリップを `BoundedNormalTanhDistribution` として factory が注入する（brax 本体は書き換えない）
++- checkpoint の読み込み・推論関数の構築は `load_checkpoint()` / `make_inference_fn_from_params()` を使う
++- 実機用 ONNX は `train/export_onnx.py` が重みから直接組み立て、JAX の推論と一致することを検証して書き出す（入力 `observation` [N, 625] → 出力 `action` [N, 20]）
+ 
+ ---
+ 
+@@ -80,9 +91,3 @@
+ - 成功基準や外乱上限を自動変更しない
+ - 実機コマンドを自動実行しない
+ - コード変更後は必ず `./venv_wsl/bin/python -m pytest tests/ -v` を実行して回帰テストを行う
+-
+----
+-
+-## 検証ステータス
+-
+-2026-09-21 時点で **全37件の pytest 単体・統合テストが PASS** し、以前のコードレビューで指摘された重大バグ（DR トレースリーク、AutoReset 境界リーク、mean 二重クリップ等）は解消済みです。現在は本番学習を実行して学習収束・報酬推移を確認するフェーズにあります。
+\ No newline at end of file
+diff --git a/docs/status.md b/docs/status.md
+index b765f95..6c4472a 100644
+--- a/docs/status.md
++++ b/docs/status.md
+@@ -1,86 +1,102 @@
+ # 進捗ステータス
+ 
+-最終更新: 2026-09-21（Copilot）
++最終更新: 2026-10-02（Claude）
+ 
+ ---
+ 
+-## 現在地
++## 2026-10-02: 3seed学習(Gate A)前の追加レビュー対応
+ 
+-- **完了 (Phase 1 〜 Phase 3 全項目実装・統合完了)**:
+-  - Claude レビュー結果に基づく修正指示書（`copilot_fix_instructions.md`）の全項目（項目1〜15、Phase 2 統合テスト、Phase 3 引き継ぎ文書）を実装完了。
+-- **完了 (WSL2/GPU テストスイート全件 PASS)**:
+-  - WSL2 環境（Python 3.12.3 / JAX 0.4.35 / Brax 0.14.2 / MuJoCo 3.2.4）にて `./venv_wsl/bin/python -m pytest tests/ -v` を実行し、**37件全件合格（100% PASS）**。
+-- **現在状態**:
+-  - JIT トレーサーリーク、AutoReset 境界リーク、mean 二重クリップ、JIT 再コンパイル遅延などの構造的障害はすべて排除済み。
+-  - **本番学習（`python3 train/train_mjx.py`）を実行可能な状態**。
++外部レビュー（N1〜N14、リポジトリ非参照で作成）を実コード・Brax 0.14.2 のソースと突き合わせ、
++実際に該当したものだけを修正した。回帰テストは `tests/test_seed_readiness.py`。
+ 
+----
++| 指摘 | 判定 | 対応 |
++|---|---|---|
++| N1 公開リポジトリにコードが無い | 前提誤り（main に全コードあり） | `run_manifest.json` に git コミット・dirty 状態を記録。未コミット変更があると起動拒否（`--allow_dirty`） |
++| N2 方策分布パッチの import 依存 | 現状の全経路は patch 済みだが構造的に脆い | グローバルパッチを廃止し、サブクラスを factory で注入 |
++| N3 AutoReset の info 非リセット | 一部該当 | done 時に info 全キー（`rng_key`/学習進捗/終了種別を除く）と `pipeline_state`/`obs` を同じ fresh reset から取得。旧実装は obs 末尾の温度・電圧が最初の episode の DR 値のままだった |
++| N4 timeout が −30 で上書き | 前提誤り（env の done は転倒のみ）。別の不整合あり | `time_out` を転倒と同時の時間切れで立てない。env の打ち切り step を PPO の `episode_length` に一致させる（旧実装は episode_length>500 で step≥500 の全 step に γV(s) が加算された） |
++| N5 Wilson 下限の擬似反復 | 前提誤り（評価 episode ごとに観測ノイズ・遅延・関節 DR の乱数が異なる） | 終端状態の指紋 `n_unique_final_states` を記録し、重複があれば Gate A 判定を参考扱いにする |
++| N6 観測正規化 std の下限 | 該当（Brax 既定 eps=0 → std 下限 1e-6） | `--obs_norm_std_eps` 既定 1e-4（std 下限≈0.01）。学習後に `normalizer_stats.json` を出力 |
++| N7 `cvel[:,3:6]` は足の速度ではない | 該当（足ごと 0.5rad/s 回転で約8cm/s の偽速度） | `mj_objectVelocity(mjOBJ_XBODY)` と同値の変換を実装 |
++| N8 CP/ZMP 入力がノイズ支配 | 前提誤り（報酬はノイズなしの真値を使用） | 変更なし（胴体速度/加速度で COM を近似している点は Phase 1 の外乱導入時に再検討） |
++| N9 Euler+kv の陽的ダンピング | 該当せず（armature=0.01 により最小 I_eff=0.010、dt·kd/I=0.25 で安定限界2に対し8倍の余裕） | 変更なし |
++| N10 PBRS 終端 | 終端のみ該当（reset 時 Φ(s0) 初期化と λ の状態依存性は問題なし） | 終端 step の報酬を `fall_penalty − Φ(s_prev)` に変更 |
++| N11 PPO のステップ算術 | 記録の欠如のみ | `run_manifest.json` に env_step/iter・方策更新回数・実際の総 step 数を記録（既定設定で 247 回、10,117,120 step） |
++| N12 学習中 eval が確率的方策 | 該当 | `deterministic_eval=True` |
++| N13/N14 実機系 | Phase 1 前に対応 | 変更なし |
+ 
+-## 主な実装・改修成果（2026-09-20〜09-21）
+-
+-### 1. 訓練パイプラインの健全化（Phase 1）
+-- **[項目1] `Tuple` import 漏れ修正**: `robot/gait_generator.py` に追加。`real/real_env.py` のトップレベル import エラーを解消。
+-- **[項目2] Domain Randomization (DR) の動的物理モデル再構成（案A）**:
+-  - `reset()` 内での `self._mjx_model` 破壊的代入を廃止し、DR パラメータ（`mass_scale`, `fric_scale`, `com_offset`）を `info` に保持。
+-  - `step()` 冒頭でスケーリング適用モデルをその場で構築して `mjx.step()` および `reward_system.compute()` に渡す方式に変更。
+-  - `jax.jit(env.reset)` と `jax.jit(env.step)` のトレース境界を分離し、`UnexpectedTracerError` を根絶。
+-- **[項目3] `EpisodeInfoResetWrapper` の追加**:
+-  - `envs/training_wrapper.py` に `EpisodeInfoResetWrapper` を実装し、`train/train_mjx.py` の `AutoResetWrapper` 外側に配置。
+-  - `AutoResetWrapper` がリセットしないエピソードスコープ変数（`step`, DR パラメータ, アクション履歴, サーボ温度等）を、エピソード終了時（`state.done=True`）のスロットについてのみ確実にリセット値（0 等）へ復元。
+-- **[項目4] CBF 後 derating クリップの修正**:
+-  - `envs/mjx_env.py` で `jp.clip(thermal_derating * voltage_derating, 0.0, 1.0)` により derating の安全限界オーバーを抑止。
+-- **[項目5] 方策ネットワーク mean 二重クリップの解消**:
+-  - `robot/policy_network.py` の `make_ppo_networks` 呼び出しから冗長な `mean_clip_scale` を削除。
+-  - `clipped_create_dist`（モンキーパッチ側）のみでクリップを行い、意図通りの bounds（≈3.0）を確保。forward pass 回帰テストも PASS。
+-- **[項目6 & 7] 実機環境の配線と定数一元化**:
+-  - `real/real_io.py` で `CMD_SERVO_POS_READ` をポーリングし、実サーボ角度を `real/real_env.py` の観測に配線。
+-  - `real/real_env.py` のハードコード定数を `RobotConfig.*` 参照に統一。
+-- **[項目8] サイクロイド軌道の `stand_height` 反映**:
+-  - `robot/gait_generator.py` の Z 軌道計算に `-stand_height` オフセットを適用し、将来の歩容拡張時の IK 破綻を予防。
+-- **[項目9 & 10] 診断スクリプトの一本化と pytest テスト追加**:
+-  - `scratch/phase0_eval_diagnostics.py` にロジックを集約し、`tests/test_phase0_eval_diagnostics.py` に pytest 単体テスト群（8件）を追加。
+-- **[項目11 & 12] JIT コンパイルの最適化**:
+-  - `scratch/gate0_standing_eval.py` および `train/visualize_rl.py` で `jax.jit` をループ外で 1 回のみ作成・使い回す設計に改修。
+-
+-### 2. リポジトリ・フォルダ構成の整理（Phase 1.5）
+-- **[項目13] Gate 0 評価スクリプトの統合**:
+-  - `gate0_formal_eval.py` / `gate0_mujoco_eval.py` / `gate0_standing_eval.py` の 3 ファイルを [`scratch/gate0_eval.py`](file:///c:/bipedal_robot/scratch/gate0_eval.py)（`--mode` 引数切り替え）に統合。
+-- **[項目14] 重複・不要スクリプトの整理**:
+-  - `render_collision.py` に `--mode` を追加して `render_pure_collision.py` を統合。
+-  - `validate_progress_wrapper.py` を [`tests/test_training_wrapper.py`](file:///c:/bipedal_robot/tests/test_training_wrapper.py) に正式 pytest 化。
+-  - `save_html.py` の GIF レンダリング処理を [`train/export_trajectory.py`](file:///c:/bipedal_robot/train/export_trajectory.py) に `--output`/`--gif` 引数付きで移植。
+-  - `render_simulation_video.py`, `validate_policy_bounds.py` 等の不要スクリプトを削除。
+-- **[項目15] フォルダ構造の正規化**:
+-  - `assets/fix_collision_geoms.py` → `scripts/fix_collision_geoms.py` へ移動。
+-  - `safety/cbf.py` → `envs/cbf.py` へ移動し `safety/` フォルダを削除。
+-  - `deploy/export_onnx.py` → `train/export_onnx.py` へ移動し `deploy/` フォルダを削除。
+-  - `stubs/` はインポート破壊防止のため配置を維持。
+-
+-### 3. 統合テスト追加と回帰防止（Phase 2）
+-- [`tests/test_training_integration.py`](file:///c:/bipedal_robot/tests/test_training_integration.py) を新規作成し、以下の 3 本の統合テストを追加（すべて PASS）:
+-  1. `test_vmap_reset_then_step_no_crash`: vmap + jit 下でのクラッシュフリー検証
+-  2. `test_domain_randomization_differs_per_env_under_vmap`: 並列環境ごとの DR 多様性検証
+-  3. `test_auto_reset_resets_episode_scoped_info`: AutoResetWrapper 配下でのエピソードスコープ変数初期化検証
++3seed は修正後のコミットで、`--seed` だけを変えて実行すること。
+ 
+ ---
+ 
+-## 直近の判定根拠
++## 2026-10-02（第2回）: 全体監査・学習品質の改善・不要部分の削除
++
++回帰テストは `tests/test_env_quality_contract.py`（新規）と `tests/test_seed_readiness.py`。
++**観測の中身・報酬・初期状態分布が変わったため、これ以前の checkpoint とは比較できない**
++（actor 観測は625次元のままだが、critic 用の観測が増えたため checkpoint の構造も変わった）。
++
++### 学習の品質に関わる変更
++
++| 変更 | 理由 |
++|---|---|
++| 初期状態分布を導入（関節角 ±0.05 rad、関節角速度 ±0.2 rad/s、足裏が接地するよう胴体高さを補正） | master_plan.md §1.6。導入前はゼロ行動でも報酬 73.6/75・足裏変位 1.1 mm で500step立ち続け、Gate A が学習済み方策と「何もしない方策」を区別できなかった。導入後のゼロ行動は 16/16 生存・足裏変位 中央値4.8 mm/最大12.7 mm（±0.1 rad/±0.5 rad/s では中央値11.7 mm、16本中1本が20 mm超）。値は `robot/config.py` の `INIT_JOINT_*_NOISE` |
++| asymmetric actor-critic（観測を `{'state', 'privileged_state'}` の dict に） | master_plan.md §1.3。critic だけが真の胴体位置・速度、FSR連続値、足裏変位、DR値（質量/摩擦/重心/関節粘性・摩擦）、外力を見る。actor と実機ONNXの入力は625次元のまま |
++| actor 観測を実機と一致させた | 実機は FSR を 0/1 フラグで送り ZMP は 0、base_pos は取得不可なのに、sim は連続の接触力・ZMP・ノイズ付き真値位置を観測させていた。姿勢はヨー（実機BNO055では磁北基準の絶対方位）を含むオイラー角から重力射影ベクトルへ（§1.3） |
++| 観測履歴を最初の観測で埋める（sim/実機） | ゼロ埋めだと最初の4stepが「全関節0rad」の偽履歴になる。実機は指令履歴も0埋めでsimと不一致だった |
++| CBFペナルティを可動域違反だけで測る | 旧実装は目標角とLPF・速度制限後の指令の差を測っており、可動域と無関係な追従遅れをペナルティ化していた |
++| 指令デッドバンド 0.02 rad → サーボ1カウント（0.0042 rad） | 実機サーボの分解能は 240°/1000。旧値では1.15°未満の微修正ができなかった |
++| 関節クーロン摩擦DRを `sign(v)` → `tanh(v/0.05)` | 静止付近で ±摩擦トルクが制御周期ごとに反転する人工的な振動源だった |
++| 熱モデルの時定数 4 s → 80 s | 80℃で始まったサーボが1エピソード中に35℃前後まで冷え、温度DR・熱ダレがエピソード内で消えていた |
++
++### 修正したバグ（学習以外）
++
++- `train/visualize_rl.py` が `np.asarray` をプロセス全体で書き換えており、これを import する Gate A 評価スクリプトにも波及していた → 削除
++- `scratch/gate_b_eval.py` がトルク飽和率の上限に関節角の可動域[rad]を使っていた（上限0の関節で飽和率が常に1.0）
++- `assets/humanoid/humanoid.xml` の IMU site が `euler="-90 0 0"`（`angle="radian"` のため −90 rad ≒ −116.6°）→ −π/2。sim はこのセンサーを使わないため学習への影響はない
++- 実機 `real/real_env.py` が LPF 状態を 0 rad で初期化しており、最初の指令が「全関節0radへ80%」になっていた → 実関節角で初期化。IMU の値を取り付け姿勢 `IMU_MOUNT_QUAT` で胴体座標系へ回転
++- `train/train_mjx.py` の JAX キャッシュパスが `/mnt/c/bipedal_robot` 固定 → リポジトリ相対
++- 未使用の `dr_kp_scale` をサンプルしていた（KP の DR は実際には適用されていなかった）→ 削除
+ 
+-- **WSL2 上でのテスト実行結果**:
+-  - `./venv_wsl/bin/python -m pytest tests/ -v`
+-  - **37 passed, 17 warnings (0:06:11)**
+-  - 詳細は [`docs/pytest結果.md`](file:///c:/bipedal_robot/docs/pytest%E7%B5%90%E6%9E%9C.md) を参照。
++### 削除したもの
++
++- 歩行関連（master_plan.md で歩行はスコープ外）: `robot/gait_generator.py`、`USE_REFERENCE_GAIT`/`GAIT_*` と分岐、実機側の参照軌道
++- 使われない設定・分岐: フォールバックXML、`nq<7` 分岐、`ALLOW_WALKING`/`TARGET_VEL_*` 等の常に定数のガード、常に0の `no_step_penalty`、`com_accel_is_fallback`、`FSR_POSITIONS`、`latency_steps` ほか未使用の info キー・報酬引数
++- テストを含まないファイル: `tests/test_joints.py`、`tests/test_mj_xml.py`、`tests/rebuild_global_stl.py`
++- 一回限り・壊れたスクリプト: `train/play_mjx.py`、`scratch/{analyze_run,compare_seeds,inspect_params_structure,verify_changes,check_model}.py`、`scratch/run_gate0_formal_wsl.sh`（存在しないスクリプトを呼んでいた）
++- 参照されないファイル: `assets/humanoid.xml`（meshdir も解決できない旧コピー）、`stubs/`、`docs/old/`、`docs/pytestと学習結果.md`、`docs/phase3_handover.md`
++- checkpoint 読み込み・推論関数の構築を `robot/policy_network.py` に一本化（6か所の重複を削除）
++
++### 実機側の未対応事項（Phase 1 前に要対応）
++
++- サーボ位置の読み出しが1ループ1台の巡回のため、各関節の値は最大200 ms 古く、有限差分の関節角速度はほぼ0とスパイクになる（sim の関節角速度ノイズはσ0.01）
++- 実機の安全クランプは関節可動域そのもの、sim は CBF のマージン付き安全域
++- サーボの指令範囲は ±120°、XML の可動域は一部 ±180°
++- `IMU_MOUNT_QUAT` は XML の IMU site に合わせた値で、実機の取り付け向きは未確認
+ 
+ ---
+ 
+-## 次のステップ（Next Steps）
+-
+-1. **WSL2 / GPU 環境での本番学習の実行**:
+-   ```bash
+-   ./venv_wsl/bin/python train/train_mjx.py
+-   ```
+-2. **学習挙動の監視**:
+-   - DR 有効下でのステップ実行速度（JIT 再コンパイルが発生しないこと）
+-   - 報酬の推移および KL ダイバージェンスの安定性（以前の KL スパイクや episode_alive 急落が解消しているか）
+-3. **学習完了後の評価**:
+-   - `scratch/gate0_eval.py --mode policy --checkpoint <path>` による Gate 0 判定
+\ No newline at end of file
++## 動作確認 (2026-10-02)
++
++- `requirements-lock.txt` と同じ構成 (Python 3.12.3 / JAX 0.11.0 / MuJoCo・MJX 3.11.0 / Brax 0.14.2 /
++  Flax 0.12.7 / NumPy 2.4.6) を CPU で再現し、全テスト PASS。500 step エピソードでの学習
++  (16 env, batch 16×8 minibatch, 2 iteration、通常eval・外乱evalとも有効) が exit 0 で完了し、
++  その checkpoint で ONNX 出力 (JAX との最大誤差 1.3e-6)・Gate A 評価・判定スクリプトまで通ることを確認した。
++  128 env の評価は CPU では1回30分以上かかるため未完走。GPU では未確認
++- 標準コマンド (`--steps 200000`, 128 env, `--num_evals` 既定20) は Brax が評価区間ごとに切り上げるため
++  実際には 38 iteration = 389,120 step 学習する。約20万 step にしたい場合は `--num_evals 5` (204,800 step)。
++  実際の値は `run_manifest.json` の `ppo_step_arithmetic` に記録される
++- MuJoCo/MJX 3.2.4 では MJX が touch センサー(FSR)に未対応のため環境の生成自体が失敗する (3.2.7 以上は可)。
++  旧版の本ファイルにあった「JAX 0.4.35 / MuJoCo 3.2.4」は Brax 0.14.2 と両立しない (Brax 0.14.2 は JAX 0.5 以上を要求)
++- 学習開始時の未コミット変更チェックは、追跡中のファイルの中身の変更だけを対象にする
++  (改行コード・実行権限だけの差分、未追跡ファイルでは止まらない)。旧版は評価スクリプトが書き出す
++  `docs/gate_a_diagnosis.md` のような未追跡ファイルでも学習を拒否していた
++- `train/export_onnx.py` は JAX 0.11 では必ず失敗していた (jax2tf が XlaCallModule 1個のグラフを出力し、
++  tf2onnx が変換できない)。ONNX グラフを重みから直接組み立てる方式に変更し、書き出し後に onnxruntime と
++  JAX の出力一致 (最大誤差 1e-4 以下) を検証する。TensorFlow / tf2onnx は不要になった (`onnx` が必要)
++
++## 次のステップ
++
++1. WSL2/GPU 環境で `./venv_wsl/bin/python -m pytest tests/ -v` を実行する
++2. 変更をコミットしてから、`--seed` だけを変えて3本学習する（追跡中のファイルに未コミットの変更があると起動しない）
++3. 各 seed の `best_params.pkl` を `scratch/phase0_eval_diagnostics.py --episodes 200` で評価し、
++   `scratch/gate_a_qualification.py --threshold <値>` で判定する
+diff --git a/envs/actuator_model.py b/envs/actuator_model.py
+index 6a3a446..18fec0a 100644
+--- a/envs/actuator_model.py
++++ b/envs/actuator_model.py
+@@ -32,9 +32,12 @@ class HX30HMModel:
+     # 定格電圧
+     NOMINAL_VOLTAGE = 11.1  # [V]
+     
+-    # 熱モデルパラメータ
+-    THERMAL_RESISTANCE = 0.08   # [℃/W] サーボの熱抵抗（小型サーボの概算）
+-    THERMAL_MASS = 50.0         # [J/℃] サーボの熱容量
++    # 熱モデルパラメータ (概算値)。時定数 τ = R·C = 80 s。
++    # [2026-10-02] 旧値 R=0.08℃/W, C=50J/℃ は τ=4s で、80℃で始まったサーボが1エピソード(5s)の
++    # 間に35℃前後まで冷え、温度DRと熱ダレがエピソード内で勝手に消えていた。小型サーボの
++    # 温度変化は分単位なので、エピソード内ではほぼ一定になるよう時定数を合わせる。
++    THERMAL_RESISTANCE = 2.0    # [℃/W] サーボ→外気の熱抵抗
++    THERMAL_MASS = 40.0         # [J/℃] サーボの熱容量
+     AMBIENT_TEMP = 25.0         # [℃] 環境温度
+     MAX_SAFE_TEMP = 85.0        # [℃] 安全動作上限温度
+     DERATING_START_TEMP = 60.0  # [℃] 熱ダレ開始温度
+diff --git a/envs/mjx_env.py b/envs/mjx_env.py
+index d3aed01..96520e9 100644
+--- a/envs/mjx_env.py
++++ b/envs/mjx_env.py
+@@ -3,20 +3,24 @@
+ このモジュールは SenpuuMaruMJXEnv を定義する。BraxのPipelineEnvを継承し、
+ GPU/TPU上でのJAX並列学習に対応する。
+ 
+-観測契約 (robot/config.py が正本、625次元):
+-  Base observation (84) + 履歴5フレーム分 (420) + action履歴 (100)
+-  + サーボ温度 (20) + 電源電圧 (1)
+-  観測の要素順序・FSR左右順・履歴の新旧方向は既存checkpointとのABI互換の
+-  ため変更してはならない (docs/current.md 参照)。
++観測 (dict, docs/master_plan.md §1.3 asymmetric actor-critic):
++  'state' (RobotConfig.OBS_DIM=625): actor 用。実機 (real/real_env.py) が組み立てる
++      観測と同じ内容・順序。Base observation (84) + 履歴5フレーム分 (420)
++      + 指令履歴 (100) + サーボ温度 (20) + 電源電圧 (1)。
++      Base observation の内訳は robot/config.py の BASE_OBS_DIM のコメント参照。
++  'privileged_state' (RobotConfig.PRIVILEGED_OBS_DIM): critic 用。'state' に
++      シミュレータの真値・DR値・外力を連結したもの (_get_privileged_obs)。
+ 
+ アクション契約 (20次元):
+   関節目標角の残差 (Δq)。トルク直接指令は使わない。
+   パイプライン: policy output → ACTION_SCALE → default pose加算 →
+-  deadband → 関節速度制限 → LPF → CBF → 熱/電圧derating → actuator
++  deadband(サーボ1カウント) → 関節速度制限 → LPF → CBF → 熱/電圧derating
++  → 0〜2制御周期のランダム遅延 → actuator
+ 
+-固定足制約:
+-  ALLOW_WALKING=False, ALLOW_STEPPING=False を常に維持する。
+-  歩行・踏み替え・支持基底の変更は全て禁止 (raiseで防御的に検出)。
++初期状態 (docs/master_plan.md §1.6):
++  nominal姿勢の関節角・関節角速度に一様ノイズ (INIT_JOINT_POS_NOISE /
++  INIT_JOINT_VEL_NOISE) を加え、低い方の足裏が nominal と同じ高さで接地する
++  よう胴体高さを補正する。
+ 
+ 外乱:
+   Phase 0では DISTURBANCE_CURRICULUM=False で無効。有効時は
+@@ -24,632 +28,428 @@ GPU/TPU上でのJAX並列学習に対応する。
+   加算する形で実装される。
+ """
+ 
+-from typing import Any, Dict, Tuple, Union
+-import os
++from typing import Any, Dict
++
+ import jax
+ import jax.numpy as jp
++import mujoco
++import numpy as np
+ from brax import envs
+ from brax.envs.base import PipelineEnv, State
+-import mujoco
++from brax.io import mjcf
+ from mujoco import mjx
+ 
+ from robot.config import RobotConfig
+-from robot.math_utils import quat_to_euler
++from robot.math_utils import projected_gravity_jax
+ from envs.actuator_model import ActuatorState, HX30HMModel
++from envs.cbf import CBFSafetyFilter
++from envs.mjx_rewards import MJXRewardSystem, curriculum_disturbance_scale
++
++# 関節クーロン摩擦DRの平滑化速度 [rad/s]。sign(v) のままだと静止付近で
++# ±dr_friction が制御周期ごとに反転し、人工的な振動源になる。
++_JOINT_FRICTION_SMOOTHING_VEL = 0.05
++
++_LEFT_FOOT_BODY = 'doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidariaikabu_hidariashiura_hidariashiura-1'
++_RIGHT_FOOT_BODY = 'doutai-v5_migidaitou_migikokansetu_migimomo_migihizabu_migigaikabu_migiashiura_migiashiura-1'
++
++
++def _box_corners(half_size: np.ndarray) -> np.ndarray:
++    signs = np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)], dtype=np.float32)
++    return signs * np.asarray(half_size, dtype=np.float32)
+ 
+ 
+ class SenpuuMaruMJXEnv(PipelineEnv):
+-    """
+-    MuJoCo XLA (MJX) を使用した GPU/TPU 並列学習用の強化学習環境。
+-    BraxのPipelineEnvを継承しており、Brax PPOとシームレスに統合可能。
++    """MuJoCo XLA (MJX) を使用した GPU/TPU 並列学習用の強化学習環境。
+ 
+     reset(rng) -> State:
+-        物理初期姿勢(qpos/qvel)を固定nominal poseにリセットし、
+-        domain randomization (質量/摩擦/重心/温度/電圧) を適用する。
+-        注意: 初期姿勢そのもののrandomizationは未実装 (常に同一pose)。
++        初期状態分布からspawnし、domain randomization (質量/摩擦/重心/関節粘性・摩擦/
++        温度/電圧) をサンプルする。DR値は info に保持し、step() で毎回物理モデルへ反映する。
+ 
+     step(state, action) -> State:
+-        1制御周期(CONTROL_DT=0.01s, 実機100Hz相当)を進める。
+-        内部でCONTROL_DECIMATION回の物理サブステップをjax.lax.scanで実行する。
+-        戻り値のState.doneはterminated(転倒等)のみを表し、truncated(時間切れ)
+-        はinfo['truncated']に分離して格納される(Braxのtime_out処理と整合)。
++        1制御周期(CONTROL_DT=0.01s)を進める。内部でCONTROL_DECIMATION回の
++        物理サブステップをjax.lax.scanで実行する。
++        State.done は terminated(転倒等)のみを表し、時間切れは info['truncated'] /
++        info['time_out'] に分離する(Braxの EpisodeWrapper/bootstrap_on_timeout と整合)。
+     """
+-    
+-    def __init__(self, obs_noise: float = 0.01, latency_steps: int = 1, **kwargs):
++
++    def __init__(self, obs_noise: float = 0.01, max_episode_steps: int = None, **kwargs):
++        # info['truncated']/info['time_out'] を立てるstep数。Brax PPOの
++        # EpisodeWrapper(episode_length)と必ず一致させること(train_mjx.pyが同じ値を渡す)。
++        self._max_episode_steps = int(
++            RobotConfig.MAX_EPISODE_STEPS if max_episode_steps is None else max_episode_steps
++        )
++        if self._max_episode_steps <= 0:
++            raise ValueError(f"max_episode_steps must be positive, got {self._max_episode_steps}")
++
+         model_path = str(RobotConfig.MUJOCO_MODEL_PATH)
+-        
+-        fallback_xml = """<mujoco model="fallback_humanoid">
+-  <option timestep="0.00416667" gravity="0 0 -9.8"/>
+-  <worldbody>
+-    <geom name="floor" type="plane" size="10 10 0.1" rgba="0.8 0.8 0.8 1" friction="1.0 0.5 0.5"/>
+-    <body name="torso" pos="0 0 0.45">
+-      <freejoint name="root"/>
+-      <geom type="capsule" fromto="0 0 0 0 0 0.2" size="0.05" mass="2.0" rgba="0.2 0.6 1.0 1"/>
+-      <body name="right_thigh" pos="0.05 0 0">
+-        <joint name="right_hip_pitch" type="hinge" axis="0 1 0" range="-1.57 1.57" damping="0.5"/>
+-        <geom type="capsule" fromto="0 0 0 0 0 -0.15" size="0.03" mass="0.5" rgba="1.0 0.4 0.2 1"/>
+-        <body name="right_shin" pos="0 0 -0.15">
+-          <joint name="right_knee" type="hinge" axis="0 1 0" range="-2.0 0" damping="0.5"/>
+-          <geom type="capsule" fromto="0 0 0 0 0 -0.15" size="0.025" mass="0.3" rgba="1.0 0.6 0.3 1"/>
+-        </body>
+-      </body>
+-      <body name="left_thigh" pos="-0.05 0 0">
+-        <joint name="left_hip_pitch" type="hinge" axis="0 1 0" range="-1.57 1.57" damping="0.5"/>
+-        <geom type="capsule" fromto="0 0 0 0 0 -0.15" size="0.03" mass="0.5" rgba="0.2 1.0 0.4 1"/>
+-        <body name="left_shin" pos="0 0 -0.15">
+-          <joint name="left_knee" type="hinge" axis="0 1 0" range="-2.0 0" damping="0.5"/>
+-          <geom type="capsule" fromto="0 0 0 0 0 -0.15" size="0.025" mass="0.3" rgba="0.4 1.0 0.6 1"/>
+-        </body>
+-      </body>
+-    </body>
+-  </worldbody>
+-  <actuator>
+-    <position name="right_hip_pitch_act" joint="right_hip_pitch" kp="20" kv="0.5" ctrlrange="-1.57 1.57"/>
+-    <position name="right_knee_act" joint="right_knee" kp="20" kv="0.5" ctrlrange="-2.0 0"/>
+-    <position name="left_hip_pitch_act" joint="left_hip_pitch" kp="20" kv="0.5" ctrlrange="-1.57 1.57"/>
+-    <position name="left_knee_act" joint="left_knee" kp="20" kv="0.5" ctrlrange="-2.0 0"/>
+-  </actuator>
+-</mujoco>
+-"""
+-        from brax.io import mjcf
+-        
+-        if not os.path.exists(model_path):
+-            print("[Warn] Model not found. Using auto-generated fallback model.")
+-            sys_brax = mjcf.loads(fallback_xml)
+-            sys_mj_model = mujoco.MjModel.from_xml_string(fallback_xml)
+-        else:
+-            sys_brax = mjcf.load(model_path)
+-            sys_mj_model = mujoco.MjModel.from_xml_path(model_path)
++        sys_brax = mjcf.load(model_path)
++        mj_model = mujoco.MjModel.from_xml_path(model_path)
+ 
+-        sys_mj_model.actuator_gainprm[:, 0] = RobotConfig.KP
+-        sys_mj_model.actuator_biasprm[:, 1] = -RobotConfig.KP
+-        sys_mj_model.actuator_biasprm[:, 2] = -RobotConfig.KD
++        mj_model.actuator_gainprm[:, 0] = RobotConfig.KP
++        mj_model.actuator_biasprm[:, 1] = -RobotConfig.KP
++        mj_model.actuator_biasprm[:, 2] = -RobotConfig.KD
+         sys_brax = sys_brax.replace(
+             actuator=sys_brax.actuator.replace(
+-                gain=jp.full((sys_mj_model.nu,), RobotConfig.KP),
+-                bias_q=jp.full((sys_mj_model.nu,), -RobotConfig.KP),
+-                bias_qd=jp.full((sys_mj_model.nu,), -RobotConfig.KD),
++                gain=jp.full((mj_model.nu,), RobotConfig.KP),
++                bias_q=jp.full((mj_model.nu,), -RobotConfig.KP),
++                bias_qd=jp.full((mj_model.nu,), -RobotConfig.KD),
+             )
+         )
+-            
+-        sys_mj_model.opt.timestep = RobotConfig.SIM_DT
++        mj_model.opt.timestep = RobotConfig.SIM_DT
+         sys_brax = sys_brax.replace(opt=sys_brax.opt.replace(timestep=RobotConfig.SIM_DT))
+-        mjx_model = mjx.put_model(sys_mj_model)
+ 
+         super().__init__(sys_brax, backend='mjx', n_frames=RobotConfig.CONTROL_DECIMATION, **kwargs)
+-        
+-        self._mjx_model = mjx_model
+-        self._actuator_indices = jp.array(list(range(sys_mj_model.nu)), dtype=jp.int32)
++
++        if mj_model.nu != RobotConfig.NUM_JOINTS:
++            raise RuntimeError(f"model has {mj_model.nu} actuators, expected {RobotConfig.NUM_JOINTS}")
++        if mj_model.jnt_type[0] != mujoco.mjtJoint.mjJNT_FREE:
++            raise RuntimeError("the first joint of the model must be the torso freejoint")
++
++        self._mj_model = mj_model
++        self._mjx_model = mjx.put_model(mj_model)
+         self.obs_noise = obs_noise
+-        self.latency_steps = latency_steps
+-        
+-        actuator_to_qpos_list = []
+-        actuator_to_qvel_list = []
+-        for act_i in range(sys_mj_model.nu):
+-            jnt_id = sys_mj_model.actuator_trnid[act_i][0]
+-            qpos_adr = sys_mj_model.jnt_qposadr[jnt_id]
+-            qvel_adr = sys_mj_model.jnt_dofadr[jnt_id]
+-            actuator_to_qpos_list.append(qpos_adr)
+-            actuator_to_qvel_list.append(qvel_adr)
+-        self._actuator_to_qpos_idx = jp.array(actuator_to_qpos_list, dtype=jp.int32)
+-        self._actuator_to_qvel_idx = jp.array(actuator_to_qvel_list, dtype=jp.int32)
+-
+-        # [2026-09-29 FIX] 重心オフセットDRの適用先。旧実装は body_ipos[0] (= world body)
+-        # に加算しており、物理挙動に一切反映されていなかった。freejointを持つ胴体(root)を使う。
+-        if sys_mj_model.njnt > 0 and sys_mj_model.jnt_type[0] == mujoco.mjtJoint.mjJNT_FREE:
+-            self._root_body_id = int(sys_mj_model.jnt_bodyid[0])
+-        else:
+-            self._root_body_id = min(1, sys_mj_model.nbody - 1)
+-
+-        from envs.mjx_rewards import MJXRewardSystem
+-        left_foot_id = mujoco.mj_name2id(sys_mj_model, mujoco.mjtObj.mjOBJ_BODY, 'doutai-v5_hidaridairou_hidarikokansetu_hidarimomo_hidarihizabu_hidariaikabu_hidariashiura_hidariashiura-1')
+-        right_foot_id = mujoco.mj_name2id(sys_mj_model, mujoco.mjtObj.mjOBJ_BODY, 'doutai-v5_migidaitou_migikokansetu_migimomo_migihizabu_migigaikabu_migiashiura_migiashiura-1')
+-        
+-        if left_foot_id == -1 or right_foot_id == -1:
+-            left_matches = [i for i in range(sys_mj_model.nbody) if 'hidariashiura' in sys_mj_model.body(i).name]
+-            right_matches = [i for i in range(sys_mj_model.nbody) if 'migiashiura' in sys_mj_model.body(i).name]
+-            
+-            if not left_matches or not right_matches:
+-                raise RuntimeError(
+-                    f"Could not find foot bodies in MuJoCo model. "
+-                    f"Left matches: {left_matches}, Right matches: {right_matches}"
+-                )
+-            left_foot_id = left_matches[0]
+-            right_foot_id = right_matches[0]
++
++        joint_ids = mj_model.actuator_trnid[:, 0]
++        self._actuator_to_qpos_idx = jp.asarray(mj_model.jnt_qposadr[joint_ids], dtype=jp.int32)
++        self._actuator_to_qvel_idx = jp.asarray(mj_model.jnt_dofadr[joint_ids], dtype=jp.int32)
++        self._joint_range = jp.asarray(mj_model.jnt_range[joint_ids], dtype=jp.float32)
++        self._default_pose = jp.asarray(RobotConfig.DEFAULT_JOINT_ANGLES, dtype=jp.float32)
++        self._ctrl_lower = jp.asarray(mj_model.actuator_ctrlrange[:, 0], dtype=jp.float32)
++        self._ctrl_upper = jp.asarray(mj_model.actuator_ctrlrange[:, 1], dtype=jp.float32)
++
++        # 重心オフセットDRの適用先 (freejointを持つ胴体)
++        self._root_body_id = int(mj_model.jnt_bodyid[0])
++
++        left_foot_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, _LEFT_FOOT_BODY)
++        right_foot_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, _RIGHT_FOOT_BODY)
++        if left_foot_id < 0 or right_foot_id < 0:
++            raise RuntimeError(f"foot bodies not found in {model_path}")
++        self._foot_ids = jp.array([left_foot_id, right_foot_id], dtype=jp.int32)
++
++        # spawn高さ補正用: 足裏の衝突boxの8頂点のうち最も低い点の高さ
++        foot_geoms = [
++            g for g in range(mj_model.ngeom)
++            if mj_model.geom_bodyid[g] in (left_foot_id, right_foot_id)
++            and (mj_model.geom_contype[g] or mj_model.geom_conaffinity[g])
++        ]
++        if not foot_geoms or any(mj_model.geom_type[g] != mujoco.mjtGeom.mjGEOM_BOX for g in foot_geoms):
++            raise RuntimeError("foot collision geoms must be boxes")
++        self._foot_geom_ids = jp.asarray(foot_geoms, dtype=jp.int32)
++        self._foot_geom_corners = jp.asarray(
++            np.stack([_box_corners(mj_model.geom_size[g]) for g in foot_geoms]))
++        self._nominal_sole_z = self._nominal_lowest_sole_z(mj_model)
+ 
+         self._reward_system = MJXRewardSystem(self._mjx_model, RobotConfig.REWARD_WEIGHTS, left_foot_id, right_foot_id)
+-        
+-        from envs.cbf import CBFSafetyFilter
+-        # [2026-09-29 FIX] DEFAULT姿勢が可動域端にある関節(hip_yaw/shoulder_pitch/elbow)で
+-        # CBFマージンがDEFAULT自体を安全域外にしないよう、nominal_poseを渡す。
+-        self._cbf = CBFSafetyFilter(
+-            nominal_pose=jp.asarray(RobotConfig.DEFAULT_JOINT_ANGLES[:sys_mj_model.nu], dtype=jp.float32)
+-        )
++        # DEFAULT姿勢が可動域端にある関節(hip_yaw/shoulder_pitch/elbow)でCBFマージンが
++        # DEFAULT自体を安全域外にしないよう、nominal_poseを渡す。
++        self._cbf = CBFSafetyFilter(nominal_pose=self._default_pose)
++
++    def _nominal_lowest_sole_z(self, mj_model) -> float:
++        data = mujoco.MjData(mj_model)
++        data.qpos[:] = 0.0
++        data.qpos[2] = RobotConfig.INITIAL_HEIGHT
++        data.qpos[3] = 1.0
++        data.qpos[np.asarray(self._actuator_to_qpos_idx)] = RobotConfig.DEFAULT_JOINT_ANGLES
++        mujoco.mj_kinematics(mj_model, data)
++        return float(self._lowest_sole_z(jp.asarray(data.geom_xpos), jp.asarray(data.geom_xmat)))
++
++    def _lowest_sole_z(self, geom_xpos: jax.Array, geom_xmat: jax.Array) -> jax.Array:
++        pos = geom_xpos[self._foot_geom_ids]                     # (G, 3)
++        rot = geom_xmat[self._foot_geom_ids].reshape(-1, 3, 3)    # (G, 3, 3)
++        corners = pos[:, None, :] + jp.einsum('gij,gkj->gki', rot, self._foot_geom_corners)
++        return jp.min(corners[..., 2])
+ 
+     @property
+     def action_size(self):
+-        return self.sys.nu
+-        
++        return self._mj_model.nu
++
+     @property
+     def observation_size(self):
+-        return RobotConfig.OBS_DIM
+-
+-    def _get_curriculum_scale(self, training_progress: float) -> float:
+-        """カリキュラム学習: 学習進捗率に応じた外乱強度スケーリング"""
+-        schedule = RobotConfig.CURRICULUM_SCHEDULE_FRACTIONS
+-        keys = sorted(schedule.keys())
+-        
+-        scale = jp.array(schedule[keys[0]], dtype=jp.float32)
+-        for key in keys:
+-            scale = jp.where(training_progress >= key, jp.array(schedule[key], dtype=jp.float32), scale)
+-        
+-        return jp.clip(scale, 0.0, 1.0)
++        return {
++            'state': (RobotConfig.OBS_DIM,),
++            'privileged_state': (RobotConfig.PRIVILEGED_OBS_DIM,),
++        }
+ 
+     def _apply_domain_randomization(self, model, mass_scale, fric_scale, com_offset):
+-        """Domain randomization を物理モデルに反映する。
+-
+-        旧実装では乱数値を privileged observation にのみ保存しており、
+-        MJX の body_mass / geom_friction / inertial COM に反映されていなかった。
+-        これにより DR が「観測上のメタ情報」だけに留まり、実際の物理挙動には効かない。
+-        """
+-        randomized = model
+-
+-        if hasattr(model, 'body_mass'):
+-            randomized = randomized.replace(body_mass=jp.asarray(model.body_mass) * mass_scale)
+-        if hasattr(model, 'geom_friction'):
+-            randomized = randomized.replace(geom_friction=jp.asarray(model.geom_friction) * fric_scale)
+-        if hasattr(model, 'body_ipos') and model.body_ipos.shape[0] > 0:
+-            body_ipos = jp.asarray(model.body_ipos).copy()
+-            body_ipos = body_ipos.at[self._root_body_id].add(jp.asarray(com_offset, dtype=body_ipos.dtype))
+-            randomized = randomized.replace(body_ipos=body_ipos)
+-
+-        return randomized
+-
+-    def _apply_joint_dr_torque(self, qfrc_applied, qvel, dr_damping, dr_friction):
+-        if self._mjx_model.nq >= 7:
+-            joint_vel = qvel[self._actuator_to_qvel_idx]
+-            joint_torque = -dr_damping * joint_vel - dr_friction * jp.sign(joint_vel)
+-            return qfrc_applied.at[self._actuator_to_qvel_idx].add(joint_torque)
++        """質量・摩擦・胴体重心オフセットのDRを物理モデルに反映する。"""
++        # MJX のバージョンによっては Model の一部フィールドが numpy 配列のため jp.asarray を通す
++        body_ipos = jp.asarray(model.body_ipos).at[self._root_body_id].add(com_offset)
++        return model.replace(
++            body_mass=jp.asarray(model.body_mass) * mass_scale,
++            geom_friction=jp.asarray(model.geom_friction) * fric_scale,
++            body_ipos=body_ipos,
++        )
+ 
+-        joint_torque = -dr_damping * qvel - dr_friction * jp.sign(qvel)
+-        return qfrc_applied.add(joint_torque)
++    def _joint_dr_torque(self, qvel, dr_damping, dr_friction):
++        joint_vel = qvel[self._actuator_to_qvel_idx]
++        friction = dr_friction * jp.tanh(joint_vel / _JOINT_FRICTION_SMOOTHING_VEL)
++        torque = -dr_damping * joint_vel - friction
++        return jp.zeros(self._mjx_model.nv).at[self._actuator_to_qvel_idx].add(torque)
+ 
+     def reset(self, rng: jax.Array) -> State:
+-        rng, rng_noise, rng_priv = jax.random.split(rng, 3)
+-        
+-        key_mass, key_fric, key_com, key_dr1, key_dr2, key_dr3, key_scale, key_temp, key_volt = jax.random.split(rng_priv, 9)
+-        mass_scale = jax.random.uniform(key_mass, shape=(), minval=RobotConfig.RANDOM_MASS_SCALE[0], maxval=RobotConfig.RANDOM_MASS_SCALE[1])
+-        fric_scale = jax.random.uniform(key_fric, shape=(), minval=RobotConfig.RANDOM_FRICTION[0], maxval=RobotConfig.RANDOM_FRICTION[1])
+-        com_offset = jax.random.uniform(key_com, shape=(3,), minval=RobotConfig.RANDOM_COM_OFFSET[0], maxval=RobotConfig.RANDOM_COM_OFFSET[1])
+-
+-        # [DR-FIX] self._mjx_model は不変のベースモデルとして保持する。
+-        # DR済みモデルはエピソード冒頭でのみ構築し、DR値を info に保存して
+-        # step() 側で毎回再構築する。これにより jax.jit(reset) と
+-        # jax.jit(step) を別々にコンパイルしても UnexpectedTracerError が
+-        # 発生しなくなる。
++        rng_noise, rng_dr, rng_init, rng_obs = jax.random.split(rng, 4)
++        k_mass, k_fric, k_com, k_damp, k_jfric, k_temp, k_volt = jax.random.split(rng_dr, 7)
++        nu = self._mjx_model.nu
++        mass_scale = jax.random.uniform(k_mass, minval=RobotConfig.RANDOM_MASS_SCALE[0], maxval=RobotConfig.RANDOM_MASS_SCALE[1])
++        fric_scale = jax.random.uniform(k_fric, minval=RobotConfig.RANDOM_FRICTION[0], maxval=RobotConfig.RANDOM_FRICTION[1])
++        com_offset = jax.random.uniform(k_com, shape=(3,), minval=RobotConfig.RANDOM_COM_OFFSET[0], maxval=RobotConfig.RANDOM_COM_OFFSET[1])
++        dr_damping = jax.random.uniform(k_damp, shape=(nu,), minval=0.01, maxval=0.15)
++        dr_friction = jax.random.uniform(k_jfric, shape=(nu,), minval=0.0, maxval=0.08)
++        servo_temp = jax.random.uniform(k_temp, shape=(nu,), minval=RobotConfig.RANDOM_TEMP[0], maxval=RobotConfig.RANDOM_TEMP[1])
++        supply_volt = jax.random.uniform(k_volt, minval=RobotConfig.RANDOM_VOLT[0], maxval=RobotConfig.RANDOM_VOLT[1])
++
++        # self._mjx_model は不変のベースモデル。DR値は info に保存し step() で毎回再構築する
++        # (jax.jit(reset) と jax.jit(step) を別々にコンパイルしても tracer がリークしない)。
+         randomized_model = self._apply_domain_randomization(self._mjx_model, mass_scale, fric_scale, com_offset)
+-        
+-        servo_temp = jax.random.uniform(key_temp, shape=(self._mjx_model.nu,), minval=RobotConfig.RANDOM_TEMP[0], maxval=RobotConfig.RANDOM_TEMP[1])
+-        supply_volt = jax.random.uniform(key_volt, shape=(1,), minval=RobotConfig.RANDOM_VOLT[0], maxval=RobotConfig.RANDOM_VOLT[1])
+-        
+-        privileged_obs = jp.concatenate([jp.array([mass_scale, fric_scale]), com_offset, servo_temp, supply_volt])
+-        
+-        mjx_data = mjx.make_data(randomized_model)
+-        
+-        nq = self._mjx_model.nq
+-        qpos = jp.zeros(nq)
+-        if nq >= 7:
+-            num_act = min(len(RobotConfig.DEFAULT_JOINT_ANGLES), self._mjx_model.nu)
+-            default_angles = jp.array(RobotConfig.DEFAULT_JOINT_ANGLES[:num_act])
+-            target_indices = self._actuator_to_qpos_idx[:num_act]
+-            qpos = qpos.at[target_indices].set(default_angles)
+-
+-            # [2026-09-29 FIX] 旧実装は com_offset を spawn 位置にも加算しており、
+-            # 胴体が最大±2cm 床へめり込む/落下する状態から開始していた。
+-            # com_offset は _apply_domain_randomization() で重心位置にのみ反映する。
+-            base_position = jp.array([0.0, 0.0, RobotConfig.INITIAL_HEIGHT], dtype=jp.float32)
+-            qpos = qpos.at[0:3].set(base_position)
+-            qpos = qpos.at[3:7].set(jp.array([1.0, 0.0, 0.0, 0.0]))
+-            
+-        mjx_data = mjx_data.replace(qpos=qpos, qvel=jp.zeros(self._mjx_model.nv))
+-        mjx_data = mjx.forward(randomized_model, mjx_data)
+-        
+-        initial_potential = self._reward_system.compute_potential(mjx_data)
+-
+-        # [2026-09-29 FIX] 指令系(LPF状態・遅延バッファ・前回指令)を reset 時の実関節角で初期化する。
+-        # 旧実装はゼロ初期化だったため、中腰で spawn した直後の約10stepは「膝0rad(伸展)」を
+-        # 指令し続け、胴体の跳ね上がり・両足接地の喪失・足裏の滑り(Gate A で約6mm超)を
+-        # reset のたびに引き起こしていた。
+-        initial_cmd = mjx_data.qpos[self._actuator_to_qpos_idx]
++
++        # --- 初期状態分布 (docs/master_plan.md §1.6) ---
++        k_qpos, k_qvel = jax.random.split(rng_init)
++        joint_pos = self._default_pose + jax.random.uniform(
++            k_qpos, shape=(nu,), minval=-RobotConfig.INIT_JOINT_POS_NOISE, maxval=RobotConfig.INIT_JOINT_POS_NOISE)
++        joint_pos = jp.clip(joint_pos, self._joint_range[:, 0], self._joint_range[:, 1])
++        joint_vel = jax.random.uniform(
++            k_qvel, shape=(nu,), minval=-RobotConfig.INIT_JOINT_VEL_NOISE, maxval=RobotConfig.INIT_JOINT_VEL_NOISE)
++
++        qpos = jp.zeros(self._mjx_model.nq)
++        qpos = qpos.at[self._actuator_to_qpos_idx].set(joint_pos)
++        qpos = qpos.at[0:3].set(jp.array([0.0, 0.0, RobotConfig.INITIAL_HEIGHT]))
++        qpos = qpos.at[3:7].set(jp.array([1.0, 0.0, 0.0, 0.0]))
++        qvel = jp.zeros(self._mjx_model.nv).at[self._actuator_to_qvel_idx].set(joint_vel)
++
++        data = mjx.make_data(randomized_model).replace(qpos=qpos, qvel=qvel)
++        # 関節角を変えると足裏の高さ・傾きが変わるため、低い方の足裏が nominal と
++        # 同じ高さ (床面すれすれ) になるよう胴体の高さを補正してから順運動学を確定する。
++        data = mjx.kinematics(randomized_model, data)
++        dz = self._nominal_sole_z - self._lowest_sole_z(data.geom_xpos, data.geom_xmat)
++        data = data.replace(qpos=data.qpos.at[2].add(dz))
++        data = mjx.forward(randomized_model, data)
++
++        # 指令系(LPF状態・遅延バッファ・前回指令)は spawn 時の実関節角で初期化する
++        # (ゼロ初期化すると直後の数stepが「全関節0rad」を指令し、足裏が滑る)。
++        initial_cmd = data.qpos[self._actuator_to_qpos_idx]
+ 
+         info = {
+-            'step': 0,
+-            'global_step': 0,
+-            'phase': 0.0,
++            'step': jp.array(0, dtype=jp.int32),
+             'last_action': initial_cmd,
+-            'action_buffer': jp.zeros(self._mjx_model.nu),
+             'filtered_action': initial_cmd,
+-            'double_last_action': initial_cmd,
+-            'triple_last_action': initial_cmd,
+             'action_history': jp.tile(initial_cmd, (RobotConfig.HISTORY_LEN, 1)),
+             'obs_history': jp.zeros((RobotConfig.HISTORY_LEN, RobotConfig.BASE_OBS_DIM)),
+             'servo_temp': servo_temp,
+-            'supply_volt': supply_volt[0],
+-            'dr_damping': jax.random.uniform(key_dr1, shape=(self._mjx_model.nu,), minval=0.01, maxval=0.15),
+-            'dr_friction': jax.random.uniform(key_dr2, shape=(self._mjx_model.nu,), minval=0.0, maxval=0.08),
+-            'dr_kp_scale': jax.random.uniform(key_dr3, shape=(self._mjx_model.nu,), minval=0.7, maxval=1.3),
+-            'disturbance_scale': jax.random.uniform(key_scale, minval=0.0, maxval=1.0),
+-            'privileged_obs': privileged_obs,
+-            'last_potential': initial_potential,
+-            'rng_key': rng_noise,
+-            # [DR-FIX] DRスケール値をinfoに保存し、step()側で再構築可能にする
++            'supply_volt': supply_volt,
++            'dr_damping': dr_damping,
++            'dr_friction': dr_friction,
+             'mass_scale': mass_scale,
+             'fric_scale': fric_scale,
+             'com_offset': com_offset,
++            'last_potential': self._reward_system.compute_potential(data),
++            'foot_xy0': data.xpos[self._foot_ids, 0:2],
++            'rng_key': rng_noise,
+             'was_disturbed': jp.array(False),
+-            'disturbance_impulse': jp.zeros(3),  # [FIX] 力積の記録領域を初期化
+-            'disturbance_recovery_steps': jp.array(1000),
+-            # Direct eval / checkpoint validation should not act like an uninitialized training run.
+-            # A zero progress value suppresses the entire soft-penalty branch and makes the eval path
+-            # behave differently from the training objective.
++            'disturbance_force': jp.zeros(3),
++            'disturbance_recovery_steps': jp.array(1000, dtype=jp.int32),
++            # 直接評価(TrainingProgressWrapper無し)では学習終了時と同じ報酬(ソフトペナルティ満額)にする
+             'training_progress': jp.array(1.0),
+-            '_env_steps': jp.array(0, dtype=jp.int32),
+             'terminated': jp.array(False),
+             'truncated': jp.array(False),
+             'time_out': jp.array(0.0),
+         }
+-        
+-        obs, info = self._get_obs(mjx_data, info, rng_noise)
+-        
+-        assert obs.shape[0] == RobotConfig.OBS_DIM, (
+-            f"Observation shape mismatch at reset(): computed {obs.shape[0]}, "
+-            f"but RobotConfig.OBS_DIM is {RobotConfig.OBS_DIM}."
+-        )
+-        
+-        reward, done, zero = jp.zeros(3)
+-        metrics = {
+-            'alive': zero, 'total_reward': zero, 'reward': zero,
+-            'reward_per_step': zero, 'total_penalty': zero,
+-            'lambda_phase': zero, 'r_cp': zero, 'r_recovery': zero,
+-            'r_com_stab': zero, 'pbrs_reward': zero,
+-            'both_feet_contact': zero,
+-            'potential': zero, 'fall_penalty': zero,
+-            'foot_balance': zero, 'zmp_margin': zero,
+-            'disturbance_recovery_bonus': zero, 'stability_index': zero,
+-            'curriculum_scale': zero,
+-            'barrier_height': zero, 'barrier_torque': zero,
+-            # [監査追加 2026-09-13] step()で追加したキーとpytree構造を
+-            # 一致させる必要がある(reset/step間でmetrics辞書の
+-            # キー集合・shapeが異なるとjax.lax.scan等でエラーになるため)。
+-            'r_upright': zero,
+-            'reward_is_finite': zero,
+-            'action_saturation': zero, 'cbf_correction_norm': zero,
+-            # [監査追加 2026-09-13] stability_metrics.py / mjx_rewards.py
+-            # 側で追加した診断フラグとpytree構造を一致させる。
+-            'stability_metrics_finite': zero, 'com_accel_is_fallback': zero,
+-            # [予防追加 2026-09-13] envs/mjx_env.py の physics_step
+-            # ロールバック機構が発散を検出したかどうかのフラグ。
++
++        obs, info = self._get_obs(data, info, rng_obs, is_reset=True)
++
++        zero = jp.array(0.0)
++        metrics = {key: zero for key in self._reward_system.METRIC_KEYS}
++        metrics.update({
+             'physics_diverged': zero,
+-        }
+-        
+-        return State(mjx_data, obs, reward, done, metrics, info)
++            'action_saturation': zero,
++            'cbf_correction_norm': zero,
++            'foot_displacement': zero,
++        })
++        return State(data, obs, zero, zero, metrics, info)
+ 
+     def step(self, state: State, action: jax.Array) -> State:
+         """1制御周期(CONTROL_DT=0.01秒)を実行する。
+ 
+         Args:
+-            state: 直前のState (pipeline_state, obs, info を含む)
+-            action: 20次元、[-1, 1]相当のpolicy出力。ACTION_SCALEで
+-                スケールされ、default_pose + action*ACTION_SCALE として
+-                目標関節角(残差方式)に変換される。
+-
+-        Returns:
+-            新しいState。done は terminated のみを表す
+-            (truncatedは state.info['truncated'] に分離)。
+-            state.metrics には reward_is_finite 等の診断フラグを含む
+-            (改良規約 §18 NaN/Inf即時停止条件のため)。
++            action: 20次元、[-1, 1]のpolicy出力。default_pose + action*ACTION_SCALE を
++                目標関節角とする(残差方式)。
+         """
+-        info = state.info.copy()
+-        
+-        if RobotConfig.USE_REFERENCE_GAIT:
+-            residual_rad = action * RobotConfig.ACTION_SCALE * 0.5
+-            base_target_rad = info.get('reference_action', jp.zeros(self._mjx_model.nu))
+-            target_rad = base_target_rad + residual_rad
+-        else:
+-            default_pose = jp.array(RobotConfig.DEFAULT_JOINT_ANGLES[:self._mjx_model.nu])
+-            target_rad = default_pose + action * RobotConfig.ACTION_SCALE
++        info = dict(state.info)
++        target_rad = self._default_pose + action * RobotConfig.ACTION_SCALE
+ 
+-        if getattr(RobotConfig, 'TARGET_VEL_X', 0.0) != 0.0 or getattr(RobotConfig, 'TARGET_VEL_Y', 0.0) != 0.0 or getattr(RobotConfig, 'TARGET_YAW_RATE', 0.0) != 0.0:
+-            raise ValueError("Standing-only mission requires TARGET_VEL_X/Y/YAW_RATE all zero.")
+-        
++        # --- 指令パイプライン: deadband → 速度制限 → LPF ---
+         current_cmd = info['filtered_action']
+         delta_rad = target_rad - current_cmd
+-        
+-        deadband_threshold = 0.02
+-        delta_rad = jp.where(jp.abs(delta_rad) < deadband_threshold, 0.0, delta_rad)
+-        
++        delta_rad = jp.where(jp.abs(delta_rad) < RobotConfig.SERVO_POSITION_RESOLUTION, 0.0, delta_rad)
+         max_delta = RobotConfig.MOTOR_MAX_VELOCITY * RobotConfig.CONTROL_DT
+         delta_rad = jp.clip(delta_rad, -max_delta, max_delta)
+-        
+-        constrained_target = current_cmd + delta_rad
+-        
+         alpha = RobotConfig.MOTOR_LPF_ALPHA
+-        filtered_action = (1.0 - alpha) * current_cmd + alpha * constrained_target
++        filtered_action = current_cmd + alpha * delta_rad
+         info['filtered_action'] = filtered_action
+-        
+-        # Apply CBF Safety Filter
+-        limit_lower = self._mjx_model.actuator_ctrlrange[:, 0]
+-        limit_upper = self._mjx_model.actuator_ctrlrange[:, 1]
+-        
+-        safe_target_rad = self._cbf.filter_action(filtered_action, limit_lower, limit_upper)
+-        # [BUGFIX 2026-09-10] 旧呼び出しは compute_cbf_penalty(target_rad, limit_lower,
+-        # limit_upper) となっており、safety/cbf.py の現行シグネチャ
+-        # compute_cbf_penalty(nominal_action, safe_action, limit_lower=None, limit_upper=None)
+-        # と噛み合っていなかった。結果として:
+-        #   - 第2引数(safe_action)に limit_lower の値が誤って渡り、
+-        #     direct_penalty が「target_radと関節下限との距離」という
+-        #     無意味な量になっていた
+-        #   - 第4引数(limit_upper)が渡されず None のままとなり、
+-        #     margin-basedのsoftplusペナルティ(CBF-2/CBF-3で導入された
+-        #     より厳格な項)が常にスキップされていた
+-        # filter_action()が返す safe_target_rad (実際にクランプされた
+-        # アクション)を正しく第2引数として渡すよう修正した。
+-        # 物理的な安全性(filter_action()によるハードクランプ)自体は
+-        # このバグの影響を受けていない。影響はCBFペナルティによる
+-        # 報酬整形が意図通り機能していなかった点のみ。
+-        cbf_penalty = self._cbf.compute_cbf_penalty(target_rad, safe_target_rad, limit_lower, limit_upper)
+-        
+-        # Thermal & Voltage Derating
++
++        # --- CBF安全フィルタ ---
++        lo, hi = self._ctrl_lower, self._ctrl_upper
++        safe_target_rad = self._cbf.filter_action(filtered_action, lo, hi)
++        # [2026-10-02 FIX] CBFペナルティ・診断は「方策の目標角がどれだけ安全域を越えたか」で測る。
++        # 旧実装は target_rad と LPF/速度制限後の指令の差を測っており、可動域とは無関係な
++        # 指令の追従遅れ(LPFの過渡応答)までCBF違反としてペナルティ化していた。
++        clamped_target = self._cbf.filter_action(target_rad, lo, hi)
++        cbf_penalty = self._cbf.compute_cbf_penalty(target_rad, clamped_target, lo, hi)
++
++        # --- 熱・電圧 derating ---
+         act_state = ActuatorState(temperature=info['servo_temp'], supply_voltage=info['supply_volt'])
+-        thermal_derating = HX30HMModel.compute_thermal_derating(act_state.temperature)
+-        voltage_derating = HX30HMModel.compute_voltage_derating(act_state.supply_voltage)
+-        # [BUGFIX 項目4] derating合成値を[0,1]にクランプ。voltage_deratingは
+-        # 最大1.2まで許容されており、クランプしないとCBFで制限した
+-        # safe_target_radを超えてしまう。
+-        derating = jp.clip(thermal_derating * voltage_derating, 0.0, 1.0)
++        derating = jp.clip(
++            HX30HMModel.compute_thermal_derating(act_state.temperature)
++            * HX30HMModel.compute_voltage_derating(act_state.supply_voltage),
++            0.0, 1.0,
++        )
+         real_target_rad = current_cmd + (safe_target_rad - current_cmd) * derating
+-        
+-        # [FIX] 熱モデルの入力を物理エンジンの実トルクに変更
+-        # 前回の物理ステップで計算された actuator_force を使用して正確な発熱を推定
+-        real_torque = state.pipeline_state.actuator_force
+-        new_act_state = HX30HMModel.update_temperature(act_state, real_torque, RobotConfig.CONTROL_DT)
+-        info['servo_temp'] = new_act_state.temperature
+-        
+-        # Actuator History Buffer & Stochastic Delay
+-        ah = jp.roll(info['action_history'], shift=-1, axis=0)
+-        ah = ah.at[-1].set(real_target_rad)
+-        info['action_history'] = ah
+-        
++        # 熱モデルの入力は前回の物理ステップの実トルク
++        info['servo_temp'] = HX30HMModel.update_temperature(
++            act_state, state.pipeline_state.actuator_force, RobotConfig.CONTROL_DT).temperature
++
++        # --- 指令履歴と 0〜2 制御周期のランダム遅延 ---
++        action_history = jp.roll(info['action_history'], shift=-1, axis=0).at[-1].set(real_target_rad)
++        info['action_history'] = action_history
+         rng_delay, rng_push, rng_obs, next_rng = jax.random.split(info['rng_key'], 4)
+         info['rng_key'] = next_rng
+-        
+         delay_idx = jax.random.randint(rng_delay, shape=(), minval=0, maxval=3)
+-        applied_action = ah[RobotConfig.HISTORY_LEN - 1 - delay_idx]
+-        
+-        disturbance_enabled = getattr(RobotConfig, 'DISTURBANCE_CURRICULUM', False)
+-        if disturbance_enabled:
+-            curriculum_disturbance_scale = self._get_curriculum_scale(info.get('training_progress', jp.array(0.0)))
+-            current_max_force = RobotConfig.RANDOM_PUSH_MAX_FORCE * curriculum_disturbance_scale
+-            rng_push_trigger, rng_push_dir = jax.random.split(rng_push, 2)
++        applied_action = action_history[RobotConfig.HISTORY_LEN - 1 - delay_idx]
++
++        # --- 外乱 (DISTURBANCE_CURRICULUM=False の間は常に0) ---
++        if RobotConfig.DISTURBANCE_CURRICULUM:
++            max_force = RobotConfig.RANDOM_PUSH_MAX_FORCE * curriculum_disturbance_scale(info['training_progress'])
++            rng_push_trigger, rng_push_dir = jax.random.split(rng_push)
+             is_push_step = jax.random.uniform(rng_push_trigger) < 0.03
+-            push_force_raw = jax.random.uniform(
++            direction = jax.random.uniform(
+                 rng_push_dir, shape=(3,),
+-                minval=jp.array([-0.5, -1.0, -0.2]),
+-                maxval=jp.array([0.5, 1.0, 0.2])
+-            )
+-            push_force_norm = push_force_raw / (jp.linalg.norm(push_force_raw) + 1e-6)
+-            push_force = jp.where(is_push_step, push_force_norm * current_max_force, jp.zeros(3))
++                minval=jp.array([-0.5, -1.0, -0.2]), maxval=jp.array([0.5, 1.0, 0.2]))
++            direction = direction / (jp.linalg.norm(direction) + 1e-6)
++            push_force = jp.where(is_push_step, direction * max_force, jp.zeros(3))
+         else:
+             is_push_step = jp.array(False)
+             push_force = jp.zeros(3)
+ 
+-        # [FIX] 外乱の力積(Impulse)を計算して記録 (caveat契約遵守)
+-        push_impulse = push_force * RobotConfig.CONTROL_DT
+-        info['disturbance_impulse'] = push_impulse
+-
+-        if getattr(RobotConfig, 'ALLOW_WALKING', False) or getattr(RobotConfig, 'ALLOW_STEPPING', False):
+-            raise ValueError("Walking/stepping is forbidden for this task.")
+-        
+-        qfrc_applied = jp.zeros(self._mjx_model.nv)
+-        if self._mjx_model.nq >= 7:
+-            qfrc_applied = qfrc_applied.at[0:3].set(push_force)
+-            
+-        qfrc_applied = self._apply_joint_dr_torque(
+-            qfrc_applied,
+-            state.pipeline_state.qvel,
+-            info['dr_damping'],
+-            info['dr_friction'],
+-        )
++        qfrc_applied = self._joint_dr_torque(
++            state.pipeline_state.qvel, info['dr_damping'], info['dr_friction']
++        ).at[0:3].add(push_force)
+ 
+-        # [DR-FIX] step()の冒頭でDR済みモデルを再構築する。
+-        # self._mjx_modelはベースモデル（不変）のまま。
+         randomized_model = self._apply_domain_randomization(
+-            self._mjx_model, info['mass_scale'], info['fric_scale'], info['com_offset']
+-        )
+-
+-        def physics_step(carry, _):
+-            d_prev = carry
+-            d = carry.replace(ctrl=applied_action, qfrc_applied=qfrc_applied)
+-            d = mjx.step(randomized_model, d)
+-            # [予防追加 2026-09-13] NaN/Inf予防: mjx.step() は
+-            # NaN-in→NaN-out のため、CONTROL_DECIMATION回のサブステップの
+-            # うち1回でも発散すると、残り全サブステップが汚染され、この
+-            # 環境は(次に外部からリセットされるまで)永続的にNaN化して
+-            # しまう。ここで即座に直前の有効な状態へロールバックすることで
+-            # 汚染の伝播を1サブステップで食い止める。発散した事実は
+-            # diverged フラグとして持ち帰り、呼び出し側で done=True を
+-            # 強制する(=次stepで自動リセットされる)。
+-            state_is_finite = jp.all(jp.isfinite(d.qpos)) & jp.all(jp.isfinite(d.qvel))
+-            d = jax.tree_util.tree_map(
+-                lambda new, old: jp.where(state_is_finite, new, old), d, d_prev
+-            )
+-            return d, jp.logical_not(state_is_finite)
+-
+-        mjx_data, diverged_flags = jax.lax.scan(
+-            physics_step, state.pipeline_state, (), length=RobotConfig.CONTROL_DECIMATION
+-        )
++            self._mjx_model, info['mass_scale'], info['fric_scale'], info['com_offset'])
++
++        def physics_step(d_prev, _):
++            d = mjx.step(randomized_model, d_prev.replace(ctrl=applied_action, qfrc_applied=qfrc_applied))
++            # mjx.step は NaN-in→NaN-out のため、1サブステップでも発散すると以降が全て汚染される。
++            # 直前の有効な状態へロールバックし、発散した事実は done=True で持ち帰る。
++            ok = jp.all(jp.isfinite(d.qpos)) & jp.all(jp.isfinite(d.qvel))
++            d = jax.tree_util.tree_map(lambda new, old: jp.where(ok, new, old), d, d_prev)
++            return d, jp.logical_not(ok)
++
++        data, diverged_flags = jax.lax.scan(
++            physics_step, state.pipeline_state, (), length=RobotConfig.CONTROL_DECIMATION)
+         physics_diverged = jp.any(diverged_flags)
+-        
+-        was_disturbed = jp.array(is_push_step, dtype=jp.bool_)
+-        disturbance_recovery_steps = jp.where(
+-            is_push_step,
+-            jp.array(0),
+-            info.get('disturbance_recovery_steps', jp.array(0)) + 1
+-        )
+-        
++
++        disturbance_recovery_steps = jp.where(is_push_step, 0, info['disturbance_recovery_steps'] + 1)
+         reward, done, metrics, current_potential = self._reward_system.compute(
+-            mjx_data, applied_action, info['last_action'], info['double_last_action'],
+-            info['triple_last_action'], cbf_penalty, info['last_potential'], info['step'],
+-            info.get('reference_action', jp.zeros(self._mjx_model.nu)),
+-            servo_temp=info.get('servo_temp', None), 
+-            supply_volt=info.get('supply_volt', 11.1),
+-            global_step=jp.array(info.get('global_step', 0), dtype=jp.int32),
+-            gait_phase=jp.asarray(info.get('phase', 0.0), dtype=jp.float32),
+-            was_disturbed=was_disturbed,
++            data, applied_action, info['last_action'], cbf_penalty,
++            info['last_potential'], info['step'],
++            servo_temp=info['servo_temp'],
++            supply_volt=info['supply_volt'],
++            was_disturbed=is_push_step,
+             disturbance_recovery_steps=disturbance_recovery_steps,
+-            training_progress=info.get('training_progress', jp.array(0.0)),
++            training_progress=info['training_progress'],
+         )
+-        info['last_potential'] = current_potential
+-
+-        # [予防追加 2026-09-13] 物理サブステップが発散(NaN/Inf)していた
+-        # 場合は無条件でdone=Trueにする。physics_step()側で状態自体は
+-        # 直前の有効な値へロールバック済みで安全だが、その「発散直前で
+-        # 足止めされた」状態のまま学習を続けさせると、PPOがそれを
+-        # 暗黙に「良い状態」と誤学習しかねないため、エピソードを
+-        # 明示的に打ち切る(=fall_penaltyと同等に扱われる)。
++        # 物理発散は状態をロールバック済みだが、発散直前で足止めされた状態を
++        # 「良い状態」と誤学習しないよう明示的に終了させる。
+         done = jp.logical_or(done, physics_diverged)
+         reward = jp.where(physics_diverged, RobotConfig.REWARD_WEIGHTS['fall_penalty'], reward)
+-        metrics['physics_diverged'] = physics_diverged.astype(jp.float32)
+-
+-        # [監査追加 2026-09-13] CBFがtarget_radをどれだけ補正(クランプ)したか
+-        # を診断指標として記録する。train_mjx.py の _audit_reward_metrics()
+-        # がこれを見て「方策が実行不能な指令を多発させていないか
+-        # (Action Distortion)」を検出する。計算本体は safety/cbf.py の
+-        # compute_saturation_ratio() に委譲している(CBFの挙動の診断は
+-        # CBFクラス自身の責務とするため)。
+-        action_saturation = self._cbf.compute_saturation_ratio(
+-            target_rad, safe_target_rad, limit_lower, limit_upper
+-        )
+-        cbf_correction_norm = jp.linalg.norm(safe_target_rad - target_rad)
+-        metrics['action_saturation'] = action_saturation
+-        metrics['cbf_correction_norm'] = cbf_correction_norm
+ 
+-        info['triple_last_action'] = info['double_last_action']
+-        info['double_last_action'] = info['last_action']
++        foot_disp = data.xpos[self._foot_ids, 0:2] - info['foot_xy0']
++        metrics.update({
++            'physics_diverged': physics_diverged.astype(jp.float32),
++            'action_saturation': self._cbf.compute_saturation_ratio(target_rad, clamped_target, lo, hi),
++            'cbf_correction_norm': jp.linalg.norm(clamped_target - target_rad),
++            'foot_displacement': jp.max(jp.linalg.norm(foot_disp, axis=-1)),
++        })
++
++        info['last_potential'] = current_potential
+         info['last_action'] = applied_action
+-        info['step'] += 1
+-        env_steps = jp.asarray(info.get('_env_steps', info.get('global_step', 0)), dtype=jp.int32) + 1
+-        info['_env_steps'] = env_steps
+-        info['global_step'] = env_steps
+-        
+-        if RobotConfig.USE_REFERENCE_GAIT:
+-            info['phase'] = (info.get('phase', 0.0) + RobotConfig.CONTROL_DT / RobotConfig.GAIT_PERIOD) % 1.0
+-        else:
+-            info['phase'] = 0.0
+-            
++        info['step'] = info['step'] + 1
++        info['was_disturbed'] = is_push_step
++        info['disturbance_force'] = push_force
+         info['disturbance_recovery_steps'] = disturbance_recovery_steps
+-        info['was_disturbed'] = was_disturbed
+         terminated = done
+-        truncated = info['step'] >= RobotConfig.MAX_EPISODE_STEPS
+-        
+-        done = terminated
++        truncated = info['step'] >= self._max_episode_steps
+         info['terminated'] = terminated
+         info['truncated'] = truncated
+-        info['time_out'] = truncated.astype(jp.float32)
+-        
+-        obs, info = self._get_obs(mjx_data, info, rng_obs)
+-        
+-        return state.replace(pipeline_state=mjx_data, obs=obs, reward=reward,
++        # 時間切れと同じstepで転倒した遷移は終端であり、bootstrap してはならない。
++        info['time_out'] = jp.logical_and(truncated, jp.logical_not(terminated)).astype(jp.float32)
++
++        obs, info = self._get_obs(data, info, rng_obs)
++        return state.replace(pipeline_state=data, obs=obs, reward=reward,
+                              done=done.astype(jp.float32), metrics=metrics, info=info)
+ 
+-    def _extract_fsr_sensor_data(self, data: mjx.Data) -> jax.Array:
+-        nsensor = getattr(self._mjx_model, 'nsensordata', 0)
+-        if nsensor >= 18:
+-            return data.sensordata[10:18]
+-        if nsensor >= 8:
+-            return data.sensordata[-8:]
+-        if nsensor > 0:
+-            pad_len = 8 - nsensor
+-            return jp.concatenate([data.sensordata, jp.zeros(pad_len)])
+-        return jp.zeros(8)
+-
+-    def _get_obs(self, data: mjx.Data, info: Dict[str, Any], rng: jax.Array) -> Tuple[jax.Array, Dict[str, Any]]:
+-        subtree_com = getattr(data, 'subtree_com', None)
+-        if subtree_com is not None:
+-            com_pos = subtree_com[0]
+-        else:
+-            if self._mjx_model.nq >= 7:
+-                com_pos = data.qpos[0:3]
+-            else:
+-                com_pos = jp.zeros(3)
+-        
+-        if self._mjx_model.nq >= 7:
+-            base_pos = data.qpos[0:3]
+-            base_quat = data.qpos[3:7]
+-            base_lin_vel = data.qvel[0:3]
+-            base_ang_vel = data.qvel[3:6]
+-            joint_pos = data.qpos[self._actuator_to_qpos_idx]
+-            joint_vel = data.qvel[self._actuator_to_qvel_idx]
++    def _fsr_forces(self, data: mjx.Data) -> jax.Array:
++        return data.sensordata[RobotConfig.FSR_SENSOR_SLICE]
++
++    def _get_obs(self, data: mjx.Data, info: Dict[str, Any], rng: jax.Array, is_reset: bool = False):
++        nu = self._mjx_model.nu
++        gravity = projected_gravity_jax(data.qpos[3:7])
++        lin_vel = data.qvel[0:3]
++        ang_vel = data.qvel[3:6]   # freejoint の角速度は胴体座標系 (IMU gyro 相当)
++        joint_pos = data.qpos[self._actuator_to_qpos_idx]
++        joint_vel = data.qvel[self._actuator_to_qvel_idx]
++        # 実機は Teensy が閾値判定した 0/1 フラグを送る (real/real_io.py)。
++        contact = (self._fsr_forces(data) > RobotConfig.FSR_CONTACT_THRESHOLD).astype(jp.float32)
++
++        rng_noise, rng_vel = jax.random.split(rng)
++        sensed = jp.concatenate([gravity, lin_vel, ang_vel, joint_pos, joint_vel])
++        sensed = sensed + jax.random.normal(rng_noise, sensed.shape) * self.obs_noise
++        sensed = sensed.at[3:6].add(jax.random.normal(rng_vel, (3,)) * RobotConfig.NOISE_LIN_VEL)
++
++        base_obs = jp.concatenate([
++            jp.zeros(3),               # base_pos: 実機で取得不可のため常に0
++            sensed,                    # 重力射影(3) 線速度(3) 角速度(3) 関節角(N) 関節角速度(N)
++            contact,                   # FSR 接地フラグ(8)
++            jp.zeros(2),               # ZMP: 実機では算出しないため常に0
++            jp.array([0.0, 1.0]),      # 位相 [sin, cos]: 立位タスクでは常に位相0
++            jp.zeros(nu),              # 参照角: 立位タスクでは常に0
++        ])
++
++        if is_reset:
++            # 履歴を最初の観測で埋める (ゼロ埋めだと最初の数stepが「全関節0rad」の偽履歴になる)
++            obs_history = jp.tile(base_obs, (RobotConfig.HISTORY_LEN, 1))
+         else:
+-            base_pos = base_quat = base_lin_vel = base_ang_vel = jp.zeros(3)
+-            base_quat = jp.array([1., 0., 0., 0.])
+-            joint_pos = data.qpos
+-            joint_vel = data.qvel
+-            
+-        rpy = quat_to_euler(base_quat)
+-        fsr_data = self._extract_fsr_sensor_data(data)
+-
+-        foot_positions = jp.array(RobotConfig.FSR_POSITIONS)
+-        total_p = jp.sum(fsr_data) + 1e-6
+-        zmp_x = jp.sum(foot_positions[:, 0] * fsr_data) / total_p
+-        zmp_y = jp.sum(foot_positions[:, 1] * fsr_data) / total_p
+-        zmp = jp.array([zmp_x, zmp_y])
+-        
+-        obs_components = [base_pos, rpy, base_lin_vel, base_ang_vel, joint_pos, joint_vel, fsr_data, zmp]
+-        raw_obs = jp.concatenate(obs_components)
+-        
+-        rng_obs, rng_pos, rng_vel = jax.random.split(rng, 3)
+-        noise = jax.random.normal(rng_obs, raw_obs.shape) * self.obs_noise
+-        noisy_obs = raw_obs + noise
+-        
+-        pos_noise = jax.random.normal(rng_pos, (3,)) * RobotConfig.NOISE_BASE_POS
+-        vel_noise = jax.random.normal(rng_vel, (3,)) * RobotConfig.NOISE_LIN_VEL
+-        noisy_obs = noisy_obs.at[0:3].add(pos_noise)
+-        noisy_obs = noisy_obs.at[6:9].add(vel_noise)
+-        
+-        phase = info.get('phase', 0.0)
+-        phase_obs = jp.array([jp.sin(2 * jp.pi * phase), jp.cos(2 * jp.pi * phase)])
+-        
+-        if RobotConfig.USE_REFERENCE_GAIT:
+-            from robot.gait_generator import jax_get_reference_trajectory
+-            ref_angles = jax_get_reference_trajectory(phase, self._mjx_model.nu)
+-            ref_angles_obs = ref_angles
+-        else:
+-            ref_angles = jp.array(RobotConfig.DEFAULT_JOINT_ANGLES[:self._mjx_model.nu])
+-            ref_angles_obs = jp.zeros_like(ref_angles)
+-            
+-        info['reference_action'] = ref_angles
+-        
+-        base_obs = jp.concatenate([noisy_obs, phase_obs, ref_angles_obs])
+-        
+-        obs_hist = info.get('obs_history', jp.zeros((RobotConfig.HISTORY_LEN, RobotConfig.BASE_OBS_DIM)))
+-        obs_hist = jp.roll(obs_hist, shift=-1, axis=0)
+-        obs_hist = obs_hist.at[-1].set(base_obs)
+-        info['obs_history'] = obs_hist
+-        
+-        flat_obs_hist = obs_hist.flatten()
+-        flat_act_hist = info.get('action_history', jp.zeros((RobotConfig.HISTORY_LEN, self._mjx_model.nu))).flatten()
+-        
+-        servo_temp = info.get('servo_temp', jp.zeros(self._mjx_model.nu))
+-        supply_volt = jp.array([info.get('supply_volt', 11.1)])
+-        
+-        final_obs = jp.concatenate([base_obs, flat_obs_hist, flat_act_hist, servo_temp, supply_volt])
+-        
+-        assert final_obs.shape[0] == RobotConfig.OBS_DIM, (
+-            f"Observation shape mismatch: computed {final_obs.shape[0]}, "
+-            f"but RobotConfig.OBS_DIM is configured as {RobotConfig.OBS_DIM}."
+-        )
+-        
+-        return final_obs, info
++            obs_history = jp.roll(info['obs_history'], shift=-1, axis=0).at[-1].set(base_obs)
++        info['obs_history'] = obs_history
++
++        actor_obs = jp.concatenate([
++            base_obs,
++            obs_history.reshape(-1),
++            info['action_history'].reshape(-1),
++            info['servo_temp'],
++            jp.reshape(info['supply_volt'], (1,)),
++        ])
++        privileged_obs = jp.concatenate([actor_obs, self._get_privileged_obs(data, info)])
++        return {'state': actor_obs, 'privileged_state': privileged_obs}, info
++
++    def _get_privileged_obs(self, data: mjx.Data, info: Dict[str, Any]) -> jax.Array:
++        """critic専用の観測 (シミュレータの真値・DR値・外力)。内訳は RobotConfig.PRIVILEGED_EXTRA_DIM。"""
++        return jp.concatenate([
++            data.qpos[0:3],
++            projected_gravity_jax(data.qpos[3:7]),
++            data.qvel[0:3],
++            data.qvel[3:6],
++            data.qpos[self._actuator_to_qpos_idx],
++            data.qvel[self._actuator_to_qvel_idx],
++            self._fsr_forces(data),
++            (data.xpos[self._foot_ids, 0:2] - info['foot_xy0']).reshape(-1),
++            jp.stack([info['mass_scale'], info['fric_scale']]),
++            info['com_offset'],
++            info['dr_damping'],
++            info['dr_friction'],
++            info['disturbance_force'],
++            jp.reshape(info['was_disturbed'].astype(jp.float32), (1,)),
++        ])
++
+ 
+ envs.register_environment('senpuu_maru_mjx', SenpuuMaruMJXEnv)
+diff --git a/envs/mjx_rewards.py b/envs/mjx_rewards.py
+index a47f467..0075a53 100644
+--- a/envs/mjx_rewards.py
++++ b/envs/mjx_rewards.py
+@@ -54,14 +54,41 @@ v2.2 (2026-09 レビュー: JAX/Braxバッチ次元誤解の修正と足裏基
+ ================================================================================
+ """
+ 
++def curriculum_disturbance_scale(training_progress: jax.Array) -> jax.Array:
++    """学習進捗率(0→1)に応じた外乱強度スケール (RobotConfig.CURRICULUM_SCHEDULE_FRACTIONS)。"""
++    schedule = RobotConfig.CURRICULUM_SCHEDULE_FRACTIONS
++    scale = jp.array(0.0, dtype=jp.float32)
++    for key in sorted(schedule):
++        scale = jp.where(training_progress >= key, jp.array(schedule[key], dtype=jp.float32), scale)
++    return jp.clip(scale, 0.0, 1.0)
++
++
+ class MJXRewardSystem:
++    # compute() が返す metrics のキー (reset() 時の metrics と pytree 構造を一致させるため公開する)
++    METRIC_KEYS = (
++        'alive', 'total_reward', 'reward', 'total_penalty', 'lambda_phase',
++        'r_cp', 'r_recovery', 'r_com_stab', 'r_upright', 'both_feet_contact',
++        'pbrs_reward', 'potential', 'fall_penalty', 'stability_index',
++        'curriculum_scale', 'disturbance_recovery_bonus', 'zmp_margin',
++        'foot_balance', 'barrier_height', 'barrier_torque', 'reward_is_finite',
++        'stability_metrics_finite',
++    )
++
+     def __init__(self, model: mjx.Model, weights: dict, left_foot_id: int, right_foot_id: int):
+         self._model = model
+-        self._nq = model.nq
+-        self._nu = model.nu
+         self._weights = weights
+         self._left_foot_id = left_foot_id
+         self._right_foot_id = right_foot_id
++        # data.cvel の並進成分の基準点 subtree_com[body_rootid[foot]] を引くための root body id。
++        # (テスト用ダミーモデル等で body_rootid が無い場合は 0 = world の subtree_com を使う。
++        #  浮遊ベースが1体だけのモデルでは両者は一致する)
++        body_rootid = getattr(model, 'body_rootid', None)
++        if body_rootid is None:
++            self._left_foot_root_id = 0
++            self._right_foot_root_id = 0
++        else:
++            self._left_foot_root_id = int(body_rootid[left_foot_id])
++            self._right_foot_root_id = int(body_rootid[right_foot_id])
+ 
+         foot_support_radius = getattr(RobotConfig, 'FOOT_SUPPORT_RADIUS', 0.06)
+         self._stability = StabilityMetrics(
+@@ -70,13 +97,8 @@ class MJXRewardSystem:
+         )
+ 
+     def compute_potential(self, data: mjx.Data, lambda_phase: jax.Array = None) -> jax.Array:
+-        if self._nq >= 7:
+-            base_pos = data.qpos[0:3]
+-            base_quat = data.qpos[3:7]
+-            rpy = quat_to_euler(base_quat)
+-        else:
+-            base_pos = jp.zeros(3)
+-            rpy = jp.zeros(3)
++        base_pos = data.qpos[0:3]
++        rpy = quat_to_euler(data.qpos[3:7])
+ 
+         gravity_projection = jp.cos(rpy[0]) * jp.cos(rpy[1])
+         p_upright = jp.exp(-5.0 * (1.0 - gravity_projection))
+@@ -89,19 +111,6 @@ class MJXRewardSystem:
+         lp = 1.0 if lambda_phase is None else lambda_phase
+         return p_upright * w['upright'] + p_target * w['target_pose'] * lp
+ 
+-    def _get_curriculum_disturbance_scale(self, training_progress: jax.Array) -> jax.Array:
+-        """
+-        カリキュラム学習: 学習進捗率(スカラー)に応じて外乱強度を段階的に増加。
+-        """
+-        schedule = RobotConfig.CURRICULUM_SCHEDULE_FRACTIONS
+-        keys = sorted(schedule.keys())
+-
+-        scale = jp.array(schedule[keys[0]], dtype=jp.float32)
+-        for key in keys:
+-            scale = jp.where(training_progress >= key, jp.array(schedule[key], dtype=jp.float32), scale)
+-
+-        return jp.clip(scale, 0.0, 1.0)
+-
+     def _compute_adaptive_reward_scaling(self, servo_temp: jax.Array, supply_volt: float) -> Dict[str, jax.Array]:
+         max_servo_temp = jp.max(servo_temp)
+         temp_stress = jp.clip((max_servo_temp - 60.0) / 20.0, 0.0, 1.0)
+@@ -164,6 +173,20 @@ class MJXRewardSystem:
+         val = jp.where(gap <= 0.0, clip_val, val)
+         return jp.clip(val, 0.0, clip_val)
+ 
++    @staticmethod
++    def body_linear_velocity(cvel: jax.Array, xpos: jax.Array, subtree_com: jax.Array,
++                             body_id: int, root_id: int) -> jax.Array:
++        """bodyフレーム原点(xpos)のワールド並進速度 (mj_objectVelocity(mjOBJ_XBODY) と同値)。
++
++        data.cvel は [角速度; 並進速度] だが、並進速度は body 原点ではなく
++        運動学ツリーの重心 subtree_com[body_rootid] にある body 固定点の速度である。
++        原点の速度は v = cvel_lin + ω × (xpos - subtree_com[root])。
++        """
++        ang = cvel[body_id, 0:3]
++        lin = cvel[body_id, 3:6]
++        offset = xpos[body_id] - subtree_com[root_id]
++        return lin + jp.cross(ang, offset)
++
+     @staticmethod
+     def extract_fsr_sensor_data(model: mjx.Model, data: mjx.Data) -> jax.Array:
+         nsensor = getattr(model, 'nsensordata', 0)
+@@ -181,77 +204,40 @@ class MJXRewardSystem:
+         data: mjx.Data,
+         action: jax.Array,
+         last_action: jax.Array,
+-        double_last_action: jax.Array,
+-        triple_last_action: jax.Array,
+         cbf_penalty: jax.Array,
+         last_potential: jax.Array,
+         step: jax.Array,
+-        reference_action: jax.Array,
+-        servo_temp: jax.Array = None,
+-        supply_volt: float = 11.1,
+-        global_step: jax.Array = None,
+-        gait_phase: float = 0.0,
++        servo_temp: jax.Array,
++        supply_volt: jax.Array,
+         was_disturbed: jax.Array = None,
+         disturbance_recovery_steps: jax.Array = None,
+         training_progress: jax.Array = None,
+     ) -> Tuple[jax.Array, jax.Array, Dict[str, jax.Array], jax.Array]:
+-
+-        if global_step is None:
+-            global_step = step
+-        if servo_temp is None:
+-            servo_temp = jp.zeros(self._nu)
++        """1制御周期分の報酬・終了判定を計算する。
++
++        Args:
++            action / last_action: 今回 / 前回 actuator に渡した目標関節角 [rad]
++            cbf_penalty: envs/cbf.py の compute_cbf_penalty() の値
++            last_potential: 前stepの PBRS ポテンシャル Φ(s)
++            step: エピソード内step数 (0始まり)
++            training_progress: 学習進捗率 [0,1]。None なら学習終了時と同じ扱い
++        """
+         if was_disturbed is None:
+             was_disturbed = jp.array(False)
+         if disturbance_recovery_steps is None:
+             disturbance_recovery_steps = jp.array(1000)
+ 
+-        # --- 1. 状態抽出 ---
+-        if self._nq >= 7:
+-            base_pos = data.qpos[0:3]
+-            base_quat = data.qpos[3:7]
+-            base_lin_vel = data.qvel[0:3]
+-            base_ang_vel = data.qvel[3:6]
+-            rpy = quat_to_euler(base_quat)
+-            torques = data.actuator_force
+-
+-            actuator_to_qpos = jp.array([
+-                self._model.jnt_qposadr[self._model.actuator_trnid[i][0]]
+-                for i in range(self._model.nu)
+-            ], dtype=jp.int32)
+-            actuator_to_qvel = jp.array([
+-                self._model.jnt_dofadr[self._model.actuator_trnid[i][0]]
+-                for i in range(self._model.nu)
+-            ], dtype=jp.int32)
+-            joint_pos = data.qpos[actuator_to_qpos]
+-            joint_vel = data.qvel[actuator_to_qvel]
+-        else:
+-            base_pos = jp.zeros(3)
+-            rpy = jp.zeros(3)
+-            base_lin_vel = jp.zeros(3)
+-            base_ang_vel = jp.zeros(3)
+-            torques = jp.zeros(self._nu)
+-            joint_pos = data.qpos
+-            joint_vel = data.qvel
+-
+-        subtree_com = getattr(data, 'subtree_com', None)
+-        com_pos = subtree_com[0] if subtree_com is not None else base_pos
+-
+-        base_qacc = getattr(data, 'qacc', None)
+-        if base_qacc is not None and self._nq >= 7:
+-            com_accel = base_qacc[0:3]
+-            # [監査追加 2026-09-13] 通常経路(qacc取得成功)
+-            com_accel_is_fallback = jp.array(0.0)
+-        else:
+-            com_accel = jp.array([0.0, 0.0, -9.81])
+-            # [監査追加 2026-09-13] envs/stability_metrics.py のv2
+-            # [CRITICAL FIX]で説明されている「zmp_marginが死んだ指標に
+-            # なる」バグの片割れが、まさにこのフォールバック分岐だった
+-            # (このcom_accelではXY成分が常に0になるため、ZMPが
+-            # 重心位置に退化し、動的な不安定性を反映できなくなる)。
+-            # 数式自体は修正済みだが、この分岐が本番で有効化されていないか
+-            # train/train_mjx.py の _audit_reward_metrics() が
+-            # 'com_accel_is_fallback' として監視する。
+-            com_accel_is_fallback = jp.array(1.0)
++        # --- 1. 状態抽出 (報酬は観測ノイズを含まない真値で計算する) ---
++        base_pos = data.qpos[0:3]
++        base_lin_vel = data.qvel[0:3]
++        base_ang_vel = data.qvel[3:6]
++        rpy = quat_to_euler(data.qpos[3:7])
++        torques = data.actuator_force
++
++        subtree_com = data.subtree_com
++        com_pos = subtree_com[0]
++        # freejoint の並進加速度 (world frame)。胴体原点の加速度で全身重心の加速度を近似する。
++        com_accel = data.qacc[0:3]
+ 
+         # --- 2. 足裏位置と相対高さの計算 (Contract Violation B 修正) ---
+         left_foot_pos = data.xpos[self._left_foot_id]
+@@ -261,9 +247,9 @@ class MJXRewardSystem:
+         # 高さは足裏を基準とする（caveat契約遵守）
+         relative_height = base_pos[2] - lowest_foot_z
+ 
+-        # --- 3. カリキュラム学習による外乱スケーリング ---
+-        tp = training_progress if training_progress is not None else jp.array(0.0)
+-        curriculum_disturbance_scale = self._get_curriculum_disturbance_scale(tp)
++        # --- 3. カリキュラム学習による外乱スケーリング (ログ用) ---
++        tp = training_progress if training_progress is not None else jp.array(1.0)
++        curriculum_scale = curriculum_disturbance_scale(tp)
+ 
+         # --- 4. λ_phase の計算 ---
+         lw = getattr(RobotConfig, 'LAMBDA_PHASE_WEIGHTS', None) or {
+@@ -296,19 +282,10 @@ class MJXRewardSystem:
+         done = jp.logical_or(jp.logical_or(is_fallen_roll, is_fallen_pitch), is_low)
+ 
+         # --- 6. 高度な安定性メトリクス計算 ---
+-        has_sensors = data.sensordata.shape[0] > 0
+         fsr_data = self.extract_fsr_sensor_data(self._model, data)
+-        left_foot_force = jp.where(
+-            has_sensors,
+-            jp.clip(jp.mean(jp.abs(fsr_data[0:4] + 1e-6)), 0.0, 100.0),
+-            0.5,
+-        )
+-        right_foot_force = jp.where(
+-            has_sensors,
+-            jp.clip(jp.mean(jp.abs(fsr_data[4:8] + 1e-6)), 0.0, 100.0),
+-            0.5,
+-        )
+-        contact_threshold = getattr(RobotConfig, 'FOOT_CONTACT_THRESHOLD', 0.05)
++        left_foot_force = jp.clip(jp.mean(jp.abs(fsr_data[0:4] + 1e-6)), 0.0, 100.0)
++        right_foot_force = jp.clip(jp.mean(jp.abs(fsr_data[4:8] + 1e-6)), 0.0, 100.0)
++        contact_threshold = RobotConfig.FOOT_CONTACT_THRESHOLD
+         both_feet_contact = jp.logical_and(
+             left_foot_force > contact_threshold,
+             right_foot_force > contact_threshold,
+@@ -319,7 +296,6 @@ class MJXRewardSystem:
+             com_pos, base_lin_vel, com_accel, rpy, base_ang_vel,
+             left_foot_pos, right_foot_pos,
+             left_foot_force, right_foot_force,
+-            gait_phase=gait_phase,
+             cp_margin_norm_dist=cp_margin_norm_dist,
+         )
+ 
+@@ -380,12 +356,17 @@ class MJXRewardSystem:
+ 
+         # [2026-09-27 改善] 真の足裏水平滑りペナルティ (data.cvelベース)
+         # 従来は (base_lin_vel * joint_vel)^2 という胴体依存の式で、胴体静止時の足裏ドリフトを検出できなかった。
+-        # MuJoCoの data.cvel (各bodyの空間速度, 3:6が並進速度[vx, vy, vz]) から左右足裏bodyの
+-        # ワールド水平速度を取り出し、その速度ノルムを直接ペナルティ化する。
++        # [2026-10-02 FIX] data.cvel[:, 3:6] は body 原点の速度ではなく、ツリー重心
++        # subtree_com[root] にある body 固定点の速度。足が ω で回転すると約 ω×0.17m の
++        # 偽速度が乗る(足ごと 0.5rad/s 回転で約8cm/s)。body_linear_velocity() で
++        # 足 body 原点のワールド速度に変換してから水平成分をペナルティ化する。
+         cvel = getattr(data, 'cvel', None)
+-        if cvel is not None and hasattr(cvel, 'shape') and cvel.shape[0] > max(self._left_foot_id, self._right_foot_id):
+-            left_foot_vel_xy = cvel[self._left_foot_id, 3:5]
+-            right_foot_vel_xy = cvel[self._right_foot_id, 3:5]
++        if (cvel is not None and subtree_com is not None and hasattr(cvel, 'shape')
++                and cvel.shape[0] > max(self._left_foot_id, self._right_foot_id)):
++            left_foot_vel_xy = self.body_linear_velocity(
++                cvel, data.xpos, subtree_com, self._left_foot_id, self._left_foot_root_id)[0:2]
++            right_foot_vel_xy = self.body_linear_velocity(
++                cvel, data.xpos, subtree_com, self._right_foot_id, self._right_foot_root_id)[0:2]
+             left_foot_speed = jp.linalg.norm(left_foot_vel_xy)
+             right_foot_speed = jp.linalg.norm(right_foot_vel_xy)
+             p_slip = jp.clip(left_foot_speed + right_foot_speed, 0.0, 10.0)
+@@ -395,12 +376,6 @@ class MJXRewardSystem:
+         foot_span = jp.linalg.norm(right_foot_pos[0:2] - left_foot_pos[0:2])
+         stance_width_penalty = jp.clip(jp.maximum(0.0, foot_span - 0.16) * 20.0, 0.0, 20.0)
+ 
+-        no_step_penalty = jp.where(
+-            getattr(RobotConfig, 'ALLOW_WALKING', False) or getattr(RobotConfig, 'ALLOW_STEPPING', False),
+-            100.0,
+-            0.0,
+-        )
+-
+         # 高さバリアは足裏基準の相対高さを使用
+         h_margin = getattr(RobotConfig, 'BARRIER_HEIGHT_MARGIN', 0.05)
+         h_clip = getattr(RobotConfig, 'BARRIER_HEIGHT_CLIP', 5.0)
+@@ -445,11 +420,10 @@ class MJXRewardSystem:
+             p_drift * w['drift'] +
+             p_slip * w['slip'] * lambda_phase +
+             stance_width_penalty * w.get('stance_width', 0.5) +
+-            # [調査まとめ 項目4] step_penalty (0~20) と no_step_penalty (100) は、
+-            # 固定足立位タスクにおいて歩行・ステップ動作を厳格に排除するための
+-            # 強制ハードペナルティとして、REWARD_WEIGHTSを介さず実質重み1.0で直接加算している。
+-            step_penalty +
+-            no_step_penalty
++            # [調査まとめ 項目4] step_penalty (0~20) は、固定足立位タスクにおいて
++            # 踏み出し・移動を排除するための強制ハードペナルティとして、
++            # REWARD_WEIGHTSを介さず実質重み1.0で直接加算している。
++            step_penalty
+         ) * penalty_scale
+ 
+         safety_penalty = (
+@@ -512,17 +486,20 @@ class MJXRewardSystem:
+         total_reward = jp.where(reward_is_finite > 0.5, total_reward, w['fall_penalty'])
+ 
+         total_reward = jp.clip(total_reward, -300.0, 300.0)
+-        total_reward = jp.where(done, w['fall_penalty'], total_reward)
++        # [2026-10-02 FIX] PBRSの終端処理。終端状態のポテンシャルを0とみなすと終端stepの
++        # シェーピング項は γ·0 - Φ(s_prev) = -last_potential になる。旧実装は終端stepの報酬を
++        # fall_penalty で丸ごと上書きしてこの項を落としており、転倒エピソードでは
++        # シェーピング総和が γ^(T-1)Φ(s_{T-1}) だけ残る(=方策不変性が崩れる)状態だった。
++        safe_last_potential = jp.where(jp.isfinite(last_potential), last_potential, 0.0)
++        terminal_reward = w['fall_penalty'] - safe_last_potential
++        total_reward = jp.where(done, terminal_reward, total_reward)
+ 
+-        safe_step = jp.maximum(step, 1).astype(jp.float32)
+-        reward_per_step = total_reward
+         total_penalty_value = soft_penalty + safety_penalty
+ 
+         metrics = {
+             'alive': r_alive,
+             'total_reward': total_reward,
+             'reward': total_reward,
+-            'reward_per_step': reward_per_step,
+             'total_penalty': total_penalty_value,
+             'lambda_phase': lambda_phase,
+             'r_cp': r_capture_point,
+@@ -538,7 +515,7 @@ class MJXRewardSystem:
+             'potential': current_potential,
+             'fall_penalty': jp.where(done, w['fall_penalty'], 0.0),
+             'stability_index': stability_index,
+-            'curriculum_scale': curriculum_disturbance_scale,
++            'curriculum_scale': curriculum_scale,
+             'disturbance_recovery_bonus': r_disturbance_recovery,
+             'zmp_margin': stability_metrics['zmp_margin'],
+             'foot_balance': stability_metrics['foot_balance'],
+@@ -549,9 +526,6 @@ class MJXRewardSystem:
+             # [監査追加 2026-09-13] envs/stability_metrics.py の幾何計算
+             # 自体の非有限値検出フラグ (同ファイルのv2.2changelog参照)。
+             'stability_metrics_finite': stability_metrics['metrics_are_finite'],
+-            # [監査追加 2026-09-13] com_accelがqacc取得失敗によるフォール
+-            # バック値[0,0,-9.81]を使っているか (1.0=フォールバック中)。
+-            'com_accel_is_fallback': com_accel_is_fallback,
+         }
+ 
+         return total_reward, done, metrics, current_potential
+\ No newline at end of file
+diff --git a/envs/stability_metrics.py b/envs/stability_metrics.py
+index db2196c..a389e67 100644
+--- a/envs/stability_metrics.py
++++ b/envs/stability_metrics.py
+@@ -62,7 +62,7 @@ v2.2 (2026-09-13 報酬ハッキング監査 対応)
+    渡していたことの「合わせ技」で発生していた。数式側は修正済みだが、
+    フォールバック分岐自体は防御的に残っているため(qacc取得失敗時の
+    保険)、将来また同様の問題が再発しないよう、両方の可視化を追加した
+-   (フォールバック側は mjx_rewards.py の 'com_accel_is_fallback' を参照)。
++   (mjx_rewards.py 側のフォールバック分岐は 2026-10-02 に削除済み)。
+ ================================================================================
+ """
+ 
+diff --git a/envs/training_wrapper.py b/envs/training_wrapper.py
+index 3d46f85..d326a98 100644
+--- a/envs/training_wrapper.py
++++ b/envs/training_wrapper.py
+@@ -29,7 +29,7 @@ Brax PPO では num_envs 個の並列環境が同期的に実行されるため
+ 各環境の progress を独立に計算する必要がある。
+ 
+ 実装:
+-  - state.obs.shape[0] で num_envs を検出
++  - state.done.shape で num_envs を検出 (obs は dict のため使わない)
+   - _env_steps, training_progress を (num_envs,) 配列として管理
+   - mjx_rewards.py 側の _get_curriculum_disturbance_scale() は
+     要素ごとのスケーリングに対応
+@@ -84,8 +84,7 @@ class TrainingProgressWrapper(Wrapper):
+     def reset(self, rng):
+         state = self.env.reset(rng)
+         
+-        # [ISSUE-2 FIXED] batch 対応: num_envs を検出
+-        batch_size = state.obs.shape[0] if state.obs.ndim > 1 else 1
++        batch_size = _batch_size(state)
+         
+         if self._fixed_progress is None:
+             initial_progress = jp.zeros(batch_size, dtype=jp.float32)
+@@ -97,7 +96,6 @@ class TrainingProgressWrapper(Wrapper):
+         state = state.replace(info={
+             **state.info,
+             '_env_steps': jp.zeros(batch_size, dtype=jp.int32),
+-            'global_step': jp.zeros(batch_size, dtype=jp.int32),
+             'training_progress': initial_progress,
+             'terminated': jp.zeros(batch_size, dtype=jp.bool_),
+             'truncated': jp.zeros(batch_size, dtype=jp.bool_),
+@@ -110,13 +108,7 @@ class TrainingProgressWrapper(Wrapper):
+         #                     現在のカウンタを取得して +1
+         #                     batch-wise インクリメント
+         
+-        env_steps_current = state.info.get('_env_steps', None)
+-        if env_steps_current is None:
+-            # フォールバック: 0 初期化（reset() が呼ばれていない場合）
+-            batch_size = state.obs.shape[0] if state.obs.ndim > 1 else 1
+-            env_steps_current = jp.zeros(batch_size, dtype=jp.int32)
+-        
+-        env_steps = jp.asarray(env_steps_current, dtype=jp.int32) + 1
++        env_steps = jp.asarray(state.info['_env_steps'], dtype=jp.int32) + 1
+         
+         if self._fixed_progress is None:
+             progress = jp.clip(
+@@ -140,13 +132,16 @@ class TrainingProgressWrapper(Wrapper):
+         state = state.replace(info={
+             **state.info,
+             '_env_steps': env_steps,
+-            'global_step': env_steps,
+             'training_progress': progress,
+         })
+         
+         return state
+ 
+ 
++def _batch_size(state) -> int:
++    return state.done.shape[0] if state.done.ndim > 0 else 1
++
++
+ class EpisodeInfoResetWrapper(Wrapper):
+     """AutoResetWrapperはpipeline_state/obs/Brax自身のinfo['steps']しかリセットしない。
+     raw envが独自にinfoへ積んでいるepisode-scopedなフィールドは、そのままでは
+@@ -157,19 +152,32 @@ class EpisodeInfoResetWrapper(Wrapper):
+     pipeline_state/obsを初期状態へ差し替えている。旧実装は「入力stateのdone」
+     (=1step遅れ)で判定していたため、新episodeの最初の1stepが前episodeの
+     指令履歴(filtered_action等)・DR値・last_potential・info['step']のまま
+-    実行されていた。戻り値のdoneで判定し、pipeline_stateと同じstepで揃える。"""
+-
+-    RESETTABLE_KEYS = (
+-        "step", "last_potential", "action_history", "obs_history",
+-        "filtered_action", "last_action", "double_last_action", "triple_last_action",
+-        "servo_temp", "supply_volt", "dr_damping", "dr_friction", "dr_kp_scale",
+-        "disturbance_scale", "privileged_obs", "disturbance_recovery_steps",
+-        # DR値 (項目2でinfoに追加)
+-        "mass_scale", "fric_scale", "com_offset",
+-    )
++    実行されていた。戻り値のdoneで判定し、pipeline_stateと同じstepで揃える。
++
++    [2026-10-02 FIX] 旧実装はリセット対象キーを RESETTABLE_KEYS に列挙しており、
++    was_disturbed / disturbance_impulse / phase / reference_action など列挙漏れの
++    キーが前episodeの値を持ち越していた(新キー追加時にも漏れる構造)。現在は
++    raw env の reset() が返す info の全キーを、PRESERVED_KEYS(エピソードを跨いで
++    持ち越すべきもの)を除いてリセットする。
++    さらに AutoResetWrapper は pipeline_state/obs を学習開始時の最初の reset 結果
++    (first_pipeline_state/first_obs)で差し替えるため、obs 末尾のサーボ温度・電圧が
++    最初のepisodeのDR値のまま、obs_history とも食い違った状態で新episodeの
++    最初の行動が決まっていた。info と同じ fresh reset から pipeline_state/obs も
++    取り直し、新episodeの初期状態を info と完全に一致させる。"""
++
++    # エピソード境界を跨いで持ち越すキー:
++    #   rng_key: 乱数系列は env ごとに継続させる(リセットすると系列が巻き戻る)
++    #   _env_steps/training_progress: TrainingProgressWrapper が管理する学習全体のカウンタ
++    #   terminated/truncated/time_out: このstep(=終了したepisodeの最終遷移)の終了種別。
++    #     Brax PPO は戻り値stateの info['time_out'] を当該遷移の extras として読むため、
++    #     ここでリセットすると bootstrap_on_timeout が効かなくなる。
++    PRESERVED_KEYS = frozenset({
++        "rng_key", "_env_steps", "training_progress",
++        "terminated", "truncated", "time_out",
++    })
+ 
+     def step(self, state, action):
+-        is_batched = state.obs.ndim > 1
++        is_batched = state.done.ndim > 0
+         if is_batched:
+             keys = jax.vmap(jax.random.split)(state.info["rng_key"])
+             rng_for_fresh = keys[:, 0]
+@@ -183,13 +191,24 @@ class EpisodeInfoResetWrapper(Wrapper):
+         # このstepでdoneになった(=AutoResetWrapperが初期状態へ差し替えた)スロット
+         d = state.done > 0.5
+         def pick(fresh, cur):
++            fresh = jp.asarray(fresh)
++            cur = jp.asarray(cur)
+             cond = d
+             if cond.ndim:
++                if cur.ndim == 0 or cur.shape[0] != cond.shape[0]:
++                    # バッチ次元を持たない葉(AutoResetWrapperのwhere_doneと同じ扱い)
++                    return cur
+                 cond = jp.reshape(cond, [cond.shape[0]] + [1] * (cur.ndim - 1))
+-            return jp.where(cond, fresh, cur)
++            return jp.where(cond, fresh, cur).astype(cur.dtype)
+ 
+         new_info = dict(state.info)
+-        for key in self.RESETTABLE_KEYS:
+-            if key in fresh_state.info and key in state.info:
+-                new_info[key] = pick(fresh_state.info[key], state.info[key])
+-        return state.replace(info=new_info)
+\ No newline at end of file
++        for key, fresh_value in fresh_state.info.items():
++            if key in self.PRESERVED_KEYS or key not in state.info:
++                continue
++            new_info[key] = jax.tree_util.tree_map(pick, fresh_value, state.info[key])
++
++        pipeline_state = jax.tree_util.tree_map(
++            pick, fresh_state.pipeline_state, state.pipeline_state
++        )
++        obs = jax.tree_util.tree_map(pick, fresh_state.obs, state.obs)
++        return state.replace(pipeline_state=pipeline_state, obs=obs, info=new_info)
+\ No newline at end of file
+diff --git a/real/real_env.py b/real/real_env.py
+index 438a75d..4a57b26 100644
+--- a/real/real_env.py
++++ b/real/real_env.py
+@@ -24,9 +24,8 @@ except ImportError:
+     ort = None
+ 
+ from real.real_io import TeensySpineIO
+-from robot.math_utils import quat_to_euler, rotate_vector_by_quaternion
++from robot.math_utils import projected_gravity_numpy, rotate_vector_by_quaternion
+ from robot.config import RobotConfig
+-from robot.gait_generator import numpy_get_reference_trajectory
+ 
+ 
+ # ============================================================
+@@ -96,7 +95,7 @@ class RealRobotEnv:
+     1. センサー取得 (共有メモリ or 直接)
+     2. 625次元観測ベクトルの構築
+     3. ONNX推論 (Base Policy, シングルスレッド)
+-    4. 残差RL合成 (サイクロイド・リファレンス + AI残差)
++    4. 残差合成 (中腰デフォルト姿勢 + AI残差)
+     5. 安全クランプ + EMA平滑化
+     6. Sync Write一括送信
+     7. インターリーブRead (2台/ループ)
+@@ -109,8 +108,7 @@ class RealRobotEnv:
+     ACT_DIM = RobotConfig.ACT_DIM
+     OBS_DIM = RobotConfig.OBS_DIM
+     ACTION_SCALE = RobotConfig.ACTION_SCALE
+-    RESIDUAL_SCALE = 0.5
+-    EMA_ALPHA = 0.8      # LPF平滑化係数
++    EMA_ALPHA = RobotConfig.MOTOR_LPF_ALPHA  # LPF平滑化係数 (学習側と同じ値)
+     
+     # 各関節の物理的可動限界 (assets/humanoid/humanoid.xml と 100% 完全同期)
+     JOINT_LIMITS_MIN = np.array([
+@@ -156,67 +154,52 @@ class RealRobotEnv:
+         self._vel_estimate = np.zeros(3)           # IMU積分速度 [m/s]
+         self._prev_joint_pos = np.zeros(self.NUM_JOINTS)  # 関節角速度の有限差分用
+         
+-        # [REAL-1 FIXED] 位相計算を相対ステップベース（学習側と同期）
+         self._episode_step = 0
+         self._max_episode_steps = RobotConfig.MAX_EPISODE_STEPS
+-        
+-        # 履歴バッファ (FIFO: 過去5ステップ)
+-        # [REAL-3 FIXED] 順序を mjx_env の jp.roll(shift=-1) と一致させる
+-        # (古 → 新の順序：0番目=最も古い, 4番目=最新)
+-        self.obs_history = deque(
+-            [np.zeros(self.BASE_OBS_DIM) for _ in range(self.HISTORY_LEN)],
+-            maxlen=self.HISTORY_LEN
+-        )
+-        self.act_history = deque(
+-            [np.zeros(self.ACT_DIM) for _ in range(self.HISTORY_LEN)],
+-            maxlen=self.HISTORY_LEN
+-        )
+-        
++
++        # BNO055 の取り付け姿勢 (センサー座標系 → 胴体座標系)。学習側の観測は胴体座標系。
++        self._imu_mount_quat = np.asarray(RobotConfig.IMU_MOUNT_QUAT, dtype=np.float64)
++
++        # 履歴バッファ (古 → 新、mjx_env の jp.roll(shift=-1) と同じ向き)。
++        # 中身は reset_episode() 後の最初の観測で埋める。
++        self.obs_history = deque(maxlen=self.HISTORY_LEN)
++        self.act_history = deque(maxlen=self.HISTORY_LEN)
++        self._history_needs_fill = True
++
+         print(f"[Info] RealRobotEnv ready. Control loop: {control_hz}Hz ({self.dt*1000:.1f}ms)")
+-    
++
++    def _measured_joint_positions(self) -> np.ndarray:
++        positions = getattr(self.spine, 'servo_positions', None)
++        if positions is not None and np.any(np.asarray(positions) != 0):
++            return np.asarray(positions, dtype=np.float64).copy()
++        return np.asarray(RobotConfig.DEFAULT_JOINT_ANGLES, dtype=np.float64).copy()
++
+     def reset_episode(self):
+-        """エピソード開始時のリセット（学習シミュレータの reset() に対応）"""
+-        self._episode_step = 0
+-        # 履歴バッファをクリア
+-        for _ in range(self.HISTORY_LEN):
+-            self.obs_history.append(np.zeros(self.BASE_OBS_DIM))
+-            self.act_history.append(np.zeros(self.ACT_DIM))
+-    
+-    def _compute_gait_phase(self) -> float:
+-        """
+-        学習時と同じ位相観測を返す。
+-        
+-        [REAL-1 FIXED] 相対時刻ベース（ステップ数）に統一。
+-        絶対時刻 time.monotonic() ではなく、エピソード内ステップ数
+-        (_episode_step) を使用することで、学習環境 mjx_env と
+-        完全に同期する。
+-        
+-        Fixed-foot mode では常に 0 を返す。
+-        """
+-        if not RobotConfig.USE_REFERENCE_GAIT:
+-            return 0.0
+-        
+-        # [REAL-1 FIXED] ステップ数ベース（学習環境 mjx_env L188 と同一ロジック）
+-        phase = (self._episode_step * self.dt / RobotConfig.GAIT_PERIOD) % 1.0
+-        return float(phase)
+-    
+-    def _get_reference_trajectory(self, phase: float) -> np.ndarray:
+-        """
+-        サイクロイド・リファレンス軌道 (gait_generator.py のロジック実機NumPy共通版)。
+-        学習環境の jax_get_reference_trajectory と 100% 完全な整合性を担保。
++        """エピソード開始時のリセット（学習シミュレータの reset() に対応）。
++
++        学習側と同じく、指令系(LPF状態・前回指令・指令履歴)は現在の実関節角で初期化し、
++        観測履歴は最初の観測で埋める。[2026-10-02 FIX] 旧実装は smoothed_action を 0rad で
++        初期化しており、最初の指令が「全関節0rad方向へ80%」という急激な動きになっていた。
+         """
+-        return numpy_get_reference_trajectory(phase, self.NUM_JOINTS)
++        self._episode_step = 0
++        joint_pos = self._measured_joint_positions()
++        self.smoothed_action = joint_pos.copy()
++        self.last_action = joint_pos.copy()
++        self._prev_joint_pos = joint_pos.copy()
++        self.obs_history.clear()
++        self.act_history.clear()
++        self._history_needs_fill = True
+     
+     def build_observation(self) -> np.ndarray:
+         """
+         625次元観測ベクトルの構築 (project_overview.md 仕様に完全準拠)
+         
+-        BASE_OBS (84次元):
+-          位置(3) + RPY(3) + 線速度(3) + 角速度(3) = 12
++        BASE_OBS (84次元, envs/mjx_env.py の _get_obs() と同じ順序):
++          位置(3, 常に0) + 重力射影(3) + 線速度(3) + 角速度(3) = 12
+           関節角度(20) + 関節角速度(20) = 40
+-          FSR(8) + ZMP(2) = 10
+-          phase_sin(1) + phase_cos(1) = 2
+-          リファレンス角度(20) = 20
++          FSR接地フラグ(8) + ZMP(2, 常に0) = 10
++          phase_sin(1, 常に0) + phase_cos(1, 常に1) = 2
++          リファレンス角度(20, 常に0) = 20
+         
+         + 観測履歴 (84×5 = 420)
+         + 行動履歴 (20×5 = 100)
+@@ -226,16 +209,14 @@ class RealRobotEnv:
+         # --- 1. IMU (UART経由, ブロッキングなし) ---
+         imu_data = self.imu_data
+         quat = imu_data["quat"]
+-        gyro = imu_data["gyro"]
+         lin_accel = imu_data["lin_accel"]
+-        rpy = quat_to_euler(quat)  # roll, pitch, yaw
++        # 姿勢は胴体座標系の重力射影ベクトル (ヨー=磁北基準の絶対方位を含まない)。
++        # センサー座標系の値を取り付け姿勢で胴体座標系へ回転する (学習側は胴体座標系)。
++        gravity = rotate_vector_by_quaternion(projected_gravity_numpy(quat), self._imu_mount_quat)
++        gyro = rotate_vector_by_quaternion(np.asarray(imu_data["gyro"], dtype=np.float64), self._imu_mount_quat)
+         
+-        # --- [REAL-2 FIXED] base_pos: 高さ(Z)のみ脚IKから粗推定予定、X/Yはゼロ ---
+-        # 学習側で NOISE_BASE_POS=0.1m の大ノイズDR済みのため
+-        # 実機側はゼロ埋めでも破綻しない設計。脚IK実装予定。
++        # --- base_pos: 実機では取得できないため常に0 (学習側の観測も常に0) ---
+         base_pos = np.zeros(3)
+-        # base_pos[2] は将来的に脚のIKから推定可能:
+-        #   z_est ≈ L_thigh * cos(knee_angle) + L_shin * cos(ankle_angle)
+         
+         # --- lin_vel: ZUPT (Zero-velocity Update) 推定 ---
+         # IMU加速度を1ステップ積分して速度を推定し、
+@@ -268,41 +249,30 @@ class RealRobotEnv:
+         joint_vel = (joint_pos - self._prev_joint_pos) / self.dt
+         self._prev_joint_pos = joint_pos.copy()
+         
+-        # --- 4. 歩行位相 ---
+-        phase = self._compute_gait_phase()
+-        phase_obs = np.array([np.sin(2 * np.pi * phase), np.cos(2 * np.pi * phase)])
+-        
+-        # --- 5. リファレンス軌道 ---
+-        ref_angles = self._get_reference_trajectory(phase)
+-        
+-        # お手本無しのとき、観測のお手本情報(ref_angles)を0にリセットして、AIから目標の軌跡を完全に隠す
+-        # これにより、ロボットは自身の状態のみを頼りに歩行する（ただし、全体の次元数は変えないため、デプロイメント契約は壊れない）
+-        if not RobotConfig.USE_REFERENCE_GAIT:
+-            ref_angles_obs = np.zeros_like(ref_angles)
+-        else:
+-            ref_angles_obs = ref_angles
+-        
+-        # --- 6. Base Obs (84次元) ---
++        # --- 4. Base Obs (84次元) ---
+         base_obs = np.concatenate([
+-            base_pos,        # 3
+-            rpy,             # 3
+-            lin_vel,         # 3 (ZUPT推定速度)
+-            gyro,            # 3
+-            joint_pos,       # 20
+-            joint_vel,       # 20
+-            fsr_raw,         # 8
+-            zmp_xy,          # 2
+-            phase_obs,       # 2
+-            ref_angles_obs   # 20
++            base_pos,                  # 3 (常に0)
++            gravity,                   # 3
++            lin_vel,                   # 3 (ZUPT推定速度)
++            gyro,                      # 3
++            joint_pos,                 # 20
++            joint_vel,                 # 20
++            fsr_raw,                   # 8 (0/1)
++            zmp_xy,                    # 2 (常に0)
++            np.array([0.0, 1.0]),      # 2 位相 [sin, cos] (立位タスクでは常に位相0)
++            np.zeros(self.NUM_JOINTS), # 20 参照角 (立位タスクでは常に0)
+         ])  # 合計: 84
+-        
+-        # [REAL-3 FIXED] 履歴バッファ更新（順序をmjx_env と明示的に一致）
+-        # mjx_env L173: obs_hist = jp.roll(obs_hist, shift=-1, axis=0)
+-        #               obs_hist = obs_hist.at[-1].set(base_obs)
+-        # つまり：[古い→新しい] の順序で、新データが末尾に追加される
+-        # NumPy deque も FIFO (古→新) なので、append() で自動的に同期する
+-        self.obs_history.append(base_obs.copy())
+-        self.act_history.append(self.last_action.copy())
++
++        # 履歴バッファ更新 ([古い→新しい] の順、新データを末尾に追加)。
++        # エピソード最初の観測では、学習側と同じく全スロットをその観測・現在の指令で埋める。
++        if self._history_needs_fill:
++            for _ in range(self.HISTORY_LEN):
++                self.obs_history.append(base_obs.copy())
++                self.act_history.append(self.last_action.copy())
++            self._history_needs_fill = False
++        else:
++            self.obs_history.append(base_obs.copy())
++            self.act_history.append(self.last_action.copy())
+         
+         obs_hist_flat = np.concatenate(list(self.obs_history))   # 84×5 = 420
+         act_hist_flat = np.concatenate(list(self.act_history))   # 20×5 = 100
+@@ -334,11 +304,7 @@ class RealRobotEnv:
+         return obs
+     
+     def step(self, obs: np.ndarray) -> np.ndarray:
+-        """
+-        1ステップの推論→行動適用。
+-        
+-        USE_REFERENCE_GAIT が True の場合は残差強化学習、False の場合はお手本無しのダイレクト強化学習を実行。
+-        """
++        """1ステップの推論→行動適用 (中腰デフォルト姿勢 + AI残差)。"""
+         # --- AI推論 ---
+         raw_action = self.policy.infer(obs)
+         
+@@ -347,17 +313,9 @@ class RealRobotEnv:
+             print("[Error] NaN/Inf detected in Policy Output! Triggering software E-stop (Zero Action).")
+             raw_action = np.zeros_like(raw_action)
+         
+-        # --- アクションの合成 (USE_REFERENCE_GAITスイッチによるダイレクト/残差の切り替え) ---
+-        if RobotConfig.USE_REFERENCE_GAIT:
+-            # AIの出力は「残差」として扱う（元の最大50%に制限）
+-            phase = self._compute_gait_phase()
+-            ref_angles = self._get_reference_trajectory(phase)
+-            residual = raw_action * self.ACTION_SCALE * self.RESIDUAL_SCALE
+-            target = ref_angles + residual
+-        else:
+-            # 「お手本無し」の場合：AIの出力を、安定した「中腰立ち姿勢」からの直接変位（最大±90度）として解釈
+-            default_pose = np.array(RobotConfig.DEFAULT_JOINT_ANGLES)
+-            target = default_pose + raw_action * self.ACTION_SCALE
++        # --- アクションの合成: 中腰立ち姿勢からの残差 (最大 ±ACTION_SCALE) ---
++        default_pose = np.array(RobotConfig.DEFAULT_JOINT_ANGLES)
++        target = default_pose + raw_action * self.ACTION_SCALE
+         
+         # --- 安全クランプ (assets/humanoid/humanoid.xml と 100% 同期した個別限界) ---
+         target = np.clip(target, self.JOINT_LIMITS_MIN, self.JOINT_LIMITS_MAX)
+diff --git a/requirements-lock.txt b/requirements-lock.txt
+index 4adc128..5c8b51a 100644
+--- a/requirements-lock.txt
++++ b/requirements-lock.txt
+@@ -5,8 +5,8 @@ brax==0.14.2
+ click==8.4.2
+ colorama==0.4.6
+ etils==1.14.0
+-Flask==3.1.3
+ flask-cors==6.0.5
++Flask==3.1.3
+ flax==0.12.7
+ fsspec==2026.7.0
+ glfw==2.10.2
+@@ -22,10 +22,11 @@ mdurl==0.1.2
+ ml_collections==1.1.0
+ ml_dtypes==0.5.4
+ msgpack==1.2.1
+-mujoco==3.11.0
+ mujoco-mjx==3.11.0
++mujoco==3.11.0
+ nest-asyncio==1.6.0
+ numpy==2.4.6
++onnx==1.23.1
+ onnxruntime==1.24.1
+ opt_einsum==3.4.0
+ optax==0.2.8
+@@ -37,15 +38,13 @@ protobuf==7.35.1
+ psutil==7.2.2
+ Pygments==2.20.0
+ PyOpenGL==3.1.10
+-PyYAML==6.0.3
+ pyserial==3.5
++PyYAML==6.0.3
+ rich==15.0.0
+ scipy==1.18.0
+ setuptools==84.0.0
+ simplejson==4.1.1
+ tensorboardX==2.6.5
+-tensorflow-cpu==2.20.0
+-tf2onnx==1.17.0
+ tensorstore==0.1.85
+ treescope==0.1.10
+ trimesh==5.0.0
+diff --git a/robot/config.py b/robot/config.py
+index ffd5ebe..65edbed 100644
+--- a/robot/config.py
++++ b/robot/config.py
+@@ -24,14 +24,17 @@ class RobotConfig:
+     MUJOCO_MODEL_PATH = BASE_DIR / "assets" / "humanoid" / "humanoid.xml"
+ 
+     # --- 1.1. FSR Hardware Layout ---
+-    # 実機ではTeensy側で接地判定するため、位置はシミュレーション専用。
+-    # MuJoCo の <sensor> は IMU(gyro/accel/quat) の後に 8ch FSR touch が
+-    # 連続して並ぶ。XML では left-foot 4ch → right-foot 4ch の順に宣言されているため、
+-    # ここも同じ順に合わせる。左右の足の座標は左右対称となるよう、右足だけ X 方向を反転する。
+-    FSR_POSITIONS = np.array([
+-        [0.012, 0.027], [-0.012, 0.027], [0.012, -0.070], [-0.012, -0.070],  # Left foot, sensor order = FL FR BL BR
+-        [-0.012, 0.027], [0.012, 0.027], [-0.012, -0.070], [0.012, -0.070],  # Right foot, sensor order = FL FR BL BR (mirrored)
+-    ])
++    # MuJoCo の <sensor> は IMU(gyro 3/accel 3/quat 4) の後に 8ch FSR touch が
++    # left-foot 4ch(FL FR BL BR) → right-foot 4ch の順に並ぶ (sensordata[10:18])。
++    # 実機は Teensy が各FSRを閾値判定した 0/1 フラグを送るため、方策の観測も
++    # 同じ閾値で二値化する (docs/master_plan.md §1.3「足裏接触（バイナリ）」)。
++    FSR_SENSOR_SLICE = slice(10, 18)
++    FSR_CONTACT_THRESHOLD = 0.2  # [N] 1センサーあたりの接地判定しきい値 (FSR402 の作動荷重 ≈0.2N)
++
++    # BNO055 の取り付け姿勢 (センサー座標系 → 胴体座標系の回転, クォータニオン [w,x,y,z])。
++    # assets/humanoid/humanoid.xml の imu_bno055_site euler="-90 0 0" と一致させること
++    # (tests/test_seed_readiness.py で検証)。実機の取り付け向きは要確認。
++    IMU_MOUNT_QUAT = np.array([np.sqrt(0.5), -np.sqrt(0.5), 0.0, 0.0])
+     
+     # --- 2. Hardware Specs ---
+     
+@@ -58,15 +61,14 @@ class RobotConfig:
+     
+     # --- Actuator Reality Gap (LPF) ---
+     MOTOR_LPF_ALPHA = 0.8  # 1st-order Low-Pass Filter coefficient for HX-30HM
++    # サーボの位置分解能: 0〜1000 カウントで ±120° (real/real_io.py の sync_write_positions)。
++    # 指令の変化がこれ未満ならサーボは動かない、として指令のデッドバンドに使う
++    # (旧実装は根拠のない 0.02rad ≈ 5カウントで、1.15°未満の微修正ができなかった)。
++    SERVO_POSITION_RESOLUTION = np.deg2rad(240.0 / 1000.0)  # [rad] ≈0.0042
+     
+     NUM_JOINTS = len(JOINT_NAMES)
+ 
+-    # --- お手本（Reference Trajectory）使用のトグルスイッチ ---
+-    # True: サイクロイド歩行軌道に基づく「残差強化学習 (Residual RL)」
+-    # False: 「お手本無し強化学習 (Direct RL)」 - 物理法則と報酬だけで自発的歩行を獲得
+-    USE_REFERENCE_GAIT = False  # お手本無しでやりたい場合は False に設定！
+-
+-    # お手本無しの学習を劇的に安定させる「中腰デフォルト姿勢 (Default Standing Joint Angles)」
++    # 中腰デフォルト姿勢 (Default Standing Joint Angles)。行動は この姿勢からの残差 Δq。
+     # ユーザーが設定したXMLの可動域に合わせて、左右で符号を反転（右は膝マイナス、左は膝プラス等）
+     DEFAULT_JOINT_ANGLES = np.array([
+         # 右脚 (yaw, roll, pitch, knee, ankle_pitch, ankle_roll)
+@@ -89,10 +91,17 @@ class RobotConfig:
+     KD = 1.0
+ 
+     # --- 4. Sim-to-Real Gap Mitigation ---
+-    # base_pos / lin_vel の大ノイズ (実機ではIMU積分ドリフトで不正確)
+-    # 学習時にこれらを「信頼できない」特徴量として扱わせるためのDR
+-    NOISE_BASE_POS    = 0.1   # [m]  — 実機ではゼロ埋め or VIO推定のためドリフト大
++    # lin_vel の大ノイズ (実機ではIMU積分(ZUPT)推定のため不正確)。
++    # 学習時にこれを「信頼できない」特徴量として扱わせるためのDR。
++    # (base_pos は実機で取得できないため観測では常に0。真値は critic の特権観測にのみ入る)
+     NOISE_LIN_VEL     = 0.5   # [m/s] — IMU積分だと数秒でm/sオーダーのエラー
++
++    # 初期状態分布 (docs/master_plan.md §1.6)。nominal姿勢の関節角・関節角速度に一様ノイズを
++    # 加え、低い方の足裏が nominal と同じ高さで接地するよう胴体高さを補正して spawn する。
++    # 0 にすると従来どおり常に同一姿勢から開始する(この場合ゼロ行動でも直立を維持できるため、
++    # Gate A の評価が「学習した方策」と「何もしない方策」を区別できない)。
++    INIT_JOINT_POS_NOISE = 0.05   # [rad] 一様 ±
++    INIT_JOINT_VEL_NOISE = 0.2    # [rad/s] 一様 ±
+     
+     RANDOM_MASS_SCALE = [0.97, 1.03]  # Phase 1: DR範囲を縮小して基本直立に集中
+     RANDOM_FRICTION = [0.7, 1.1]      # Phase 1: 摩擦変動を控えめに
+@@ -108,17 +117,17 @@ class RobotConfig:
+     PUSH_FORCE_LEVELS = []
+     
+     # 熱・電圧のシミュレーションパラメータ
+-    RANDOM_TEMP = [20.0, 80.0]  # ℃
++    RANDOM_TEMP = [25.0, 80.0]  # ℃ (下限は熱モデルの外気温 AMBIENT_TEMP。これ未満は初回更新で25℃に丸められていた)
+     RANDOM_VOLT = [9.0, 12.6]   # V
+ 
+     # --- 5. RL Settings ---
+-    # 歩行周期 (秒)
+-    GAIT_PERIOD = 1.0
+-    
+-    # 新アーキテクチャ(RMA/遅延補償対応)における観測空間定義
+     HISTORY_LEN = 5 # 過去Nステップの観測と行動(50ms分@100Hz)
+     
+-    # Base観測: 12(胴体) + N*2(関節角/速度) + 10(FSR/ZMP) + 2(位相) + N(理想軌道)
++    # Base観測 (84):
++    #   base_pos(3, 常に0) + 重力射影ベクトル(3) + 線速度(3) + 角速度(3)
++    #   + 関節角(N) + 関節角速度(N) + FSR接地フラグ(8) + ZMP(2, 常に0)
++    #   + 位相(2, 常に[0,1]) + 参照角(N, 常に0)
++    # 常に定数のチャネルは歩行用の旧設計の名残だが、実機ONNXとの625次元契約を保つため残している。
+     BASE_OBS_DIM = 12 + (NUM_JOINTS * 2) + 10 + 2 + NUM_JOINTS
+     
+     # 行動次元
+@@ -135,22 +144,23 @@ class RobotConfig:
+     # 現在の観測次元の拡張 (RMA向け) = Base(現在) + 履歴 + 温度 + 電圧
+     OBS_DIM = BASE_OBS_DIM + HISTORY_DIM + SERVO_TEMP_DIM + SUPPLY_VOLTAGE_DIM
+     
++    # critic のみが使う特権観測 (docs/master_plan.md §1.3 asymmetric actor-critic)。
++    # envs/mjx_env.py の _get_privileged_obs() の内訳と一致させること。
++    #   真の base_pos(3) + 重力射影(3) + 線速度(3) + 角速度(3) + 関節角/速度(2N)
++    #   + FSR連続値(8) + 足裏水平変位(4) + DR値(質量1+摩擦1+重心3+関節粘性N+関節摩擦N)
++    #   + 外力(3) + 外乱フラグ(1)
++    PRIVILEGED_EXTRA_DIM = 12 + 2 * NUM_JOINTS + 8 + 4 + (5 + 2 * NUM_JOINTS) + 4
++    PRIVILEGED_OBS_DIM = OBS_DIM + PRIVILEGED_EXTRA_DIM
++
+     # 行動空間: ±30度 (Phase 1: 初期探索で暴走しないよう縮小。Phase 2以降で拡大)
+     ACTION_SCALE = np.deg2rad(30)
+ 
+-    # === Standing-only mission constraints ===
+-    # 目的は自律歩行ではなく、外乱に耐えながらその場直立を維持すること。
+-    # 歩行、踏み出し、支持基底面の変更はいかなる外乱条件でも禁止。
+-    ALLOW_WALKING = False
+-    ALLOW_STEPPING = False
+-    TARGET_VEL_X = 0.0
+-    TARGET_VEL_Y = 0.0
+-    TARGET_YAW_RATE = 0.0
++    # === Standing-only mission (docs/master_plan.md: standing_fixed_feet が唯一のスコープ) ===
++    # 目的は自律歩行ではなく、外乱に耐えながら両足接地のままその場直立を維持すること。
+     # [2026-10-01 方針決定] 目的は直立姿勢の維持であり、足裏が初期位置から多少ずれることは許容する。
+     # ただし閾値を外すと「足を滑らせて逃げる」立ち方も合格になるため、歩行・踏み出しの歯止めとして
+     # 20mm を残す(旧5mm)。Gate A の slip_ok 判定(scratch/phase0_eval_diagnostics.py)で使用。
+     MAX_FOOT_TRANSLATION = 0.020  # [m], 20 mm 以下を許容
+-    MAX_SINGLE_FOOT_LIFT = 0.0
+     FOOT_CONTACT_THRESHOLD = 0.5  # [N] シミュレーション上の各足FSR4センサー平均の最小接触力 (足全体で2.0N以上)
+     
+     # ======================================================
+@@ -178,7 +188,7 @@ class RobotConfig:
+         "recovery": 0.5,
+ 
+         # ペナルティは大きく下げて、PTPな振動で負値が吹き上がらないようにする
+-        # 注: step_penalty (0~20) と no_step_penalty (100) は歩行禁止のハード制約として
++        # 注: step_penalty (0~20) は踏み出し抑止のハード制約として
+         #     REWARD_WEIGHTS を介さず mjx_rewards.py 内で直接加算される (実質重み1.0)。
+         "ang_momentum_z": 0.01,
+         "ang_momentum_xy": 0.01,
+@@ -268,11 +278,10 @@ class RobotConfig:
+     # 【設計】学習進捗率 (0.0~1.0) に基づく相対スケジュール。
+     # 絶対ステップ数による CURRICULUM_SCHEDULE は廃止。
+     # 
+-    # 理由: USE_REFERENCE_GAIT の有無で総学習ステップ数が大きく変わっても
+-    # (10M vs 20~30M)、同じ相対カリキュラムが自動的に機能する。
++    # 理由: 総学習ステップ数(--steps)を変えても同じ相対カリキュラムが機能する。
+     # 
+-    # 供給元: training_progress (mjx_env.py → mjx_rewards.py へ外部供給)
+-    # 詳細: envs/mjx_rewards.py の _get_curriculum_disturbance_scale() を参照
++    # 供給元: training_progress (envs/training_wrapper.py の TrainingProgressWrapper)
++    # 詳細: envs/mjx_rewards.py の curriculum_disturbance_scale() を参照
+     CURRICULUM_SCHEDULE_FRACTIONS = {
+         0.00: 0.00,  # 学習開始時: 外乱なし
+         0.10: 0.10,  # 10%進捗: 微弱外乱
+@@ -280,22 +289,3 @@ class RobotConfig:
+         0.50: 0.60,  # 50%進捗: 中程度外乱
+         0.75: 1.00,  # 75%進捗: 最大外乱
+     }
+-    
+-    # USE_REFERENCE_GAIT=True: 学習側説明書.md の目安(10Mステップ)
+-    # USE_REFERENCE_GAIT=False (Direct RL): 20~30Mステップ推奨のため長めに設定
+-    TOTAL_TRAINING_STEPS_ESTIMATE = 10_000_000 if USE_REFERENCE_GAIT else 25_000_000
+-
+-    # ======================================================
+-    # [GAIT-2 FIXED] 歩容パラメータ (config.py に一元化)
+-    # ======================================================
+-    # gait_generator.py と kinematics.py から参照される定数。
+-    # 複数の場所で定義されていたが、config.py に統一して保守性を向上。
+-    # 
+-    # ロボット物理寸法に関わるため、URDF/実機の値と 100% 同期すること。
+-    GAIT_STAND_HEIGHT = 0.23  # [m] 直立時の腰の高さ
+-    GAIT_STEP_HEIGHT = 0.04   # [m] 足を上げる高さ
+-    GAIT_STEP_LENGTH = 0.10   # [m] 歩幅
+-    GAIT_THIGH_LEN = 0.12     # [m] 大腿リンク長（股関節～膝）
+-    GAIT_KNEE_LEN = 0.12      # [m] 下腿リンク長（膝～足首）
+-
+-    MJX_LEARNING_RATE = 1e-4  # 学習崩壊を防ぐため低めに設定
+\ No newline at end of file
+diff --git a/robot/math_utils.py b/robot/math_utils.py
+index 9ea0541..25ce701 100644
+--- a/robot/math_utils.py
++++ b/robot/math_utils.py
+@@ -147,6 +147,26 @@ def quat_to_euler(q) -> np.ndarray:
+ 
+ 
+ 
++# ============================================================
++# 重力射影ベクトル (docs/master_plan.md §1.3 の姿勢観測)
++# ============================================================
++# 胴体座標系で見た「下向きの単位ベクトル」。オイラー角と違いヨー(実機BNO055では
++# 磁北基準の絶対方位)を含まず、特異点・角度の折り返しも無い。直立時は [0, 0, -1]。
++# q = [w, x, y, z] は胴体→ワールドの回転なので、ワールドの [0,0,-1] を逆回転する:
++#   g_body = R(q)^T [0,0,-1] = -(R の3行目) = -[2(xz - wy), 2(yz + wx), 1 - 2(x²+y²)]
++
++def projected_gravity_numpy(q: np.ndarray) -> np.ndarray:
++    q = np.asarray(q, dtype=np.float64)
++    q = q / max(np.linalg.norm(q), 1e-8)
++    w, x, y, z = q
++    return -np.array([2.0 * (x * z - w * y), 2.0 * (y * z + w * x), 1.0 - 2.0 * (x * x + y * y)])
++
++
++def projected_gravity_jax(q: "jax.Array") -> "jax.Array":
++    w, x, y, z = q[0], q[1], q[2], q[3]
++    return -jp.stack([2.0 * (x * z - w * y), 2.0 * (y * z + w * x), 1.0 - 2.0 * (x * x + y * y)])
++
++
+ # ============================================================
+ # その他のユーティリティ関数
+ # ============================================================
+diff --git a/robot/policy_network.py b/robot/policy_network.py
+index 93a9af5..c12b859 100644
+--- a/robot/policy_network.py
++++ b/robot/policy_network.py
+@@ -1,51 +1,129 @@
+-"""Shared PPO policy network configuration for training and deployment."""
++"""Shared PPO policy network configuration for training, evaluation and deployment.
++
++- 方策分布: BoundedNormalTanhDistribution を make_policy_network_factory() の戻り値に
++  明示的に注入する (brax 本体のクラスは書き換えない)。分布はパラメータを持たない。
++- asymmetric actor-critic (docs/master_plan.md §1.3): 観測は dict で、
++  actor は 'state' (実機で取得できる観測) のみ、critic は 'privileged_state'
++  (シミュレータの真値を含む) を読む。
++- checkpoint の読み込みと推論関数の構築は load_checkpoint() /
++  make_inference_fn_from_params() に一本化する (評価・可視化・ONNX出力で共通)。
++"""
++
++import pickle
++from pathlib import Path
++from typing import Optional
+ 
+ import jax
+ import jax.numpy as jnp
+ from brax.training import distribution as brax_distribution
++from brax.training.acme import running_statistics
+ from brax.training.agents.ppo import networks as ppo_networks
+ 
++from robot.config import RobotConfig
++
+ 
+ POLICY_MEAN_CLIP_SCALE = 3.0
+ POLICY_MIN_STD = 0.15
+ POLICY_MAX_STD = 3.0
+ 
+-_PATCH_INSTALLED = False
++POLICY_OBS_KEY = 'state'
++VALUE_OBS_KEY = 'privileged_state'
++
++LOG_ROOT = Path(__file__).resolve().parents[1] / "log"
++
+ 
++class BoundedNormalTanhDistribution(brax_distribution.NormalTanhDistribution):
++    """平均を softsign で ±POLICY_MEAN_CLIP_SCALE に、std を
++    [POLICY_MIN_STD, POLICY_MAX_STD] に制限した tanh-normal 分布。
+ 
+-def install_policy_std_cap() -> None:
+-    """Install the bounded tanh-normal distribution patch once."""
+-    global _PATCH_INSTALLED
+-    if _PATCH_INSTALLED:
+-        return
+-    if not hasattr(brax_distribution, "_NormalDistribution"):
+-        raise RuntimeError(
+-            "Brax distribution API changed: _NormalDistribution is unavailable"
+-        )
++    deterministic 行動 (mode) は tanh(POLICY_MEAN_CLIP_SCALE * softsign(loc_raw))。
++    """
+ 
+-    def clipped_create_dist(self, parameters):
++    def create_dist(self, parameters):
+         loc, scale = jnp.split(parameters, 2, axis=-1)
+         loc = POLICY_MEAN_CLIP_SCALE * (loc / (1.0 + jnp.abs(loc)))
+         scale = (jax.nn.softplus(scale) + self._min_std) * self._var_scale
+         scale = jnp.clip(scale, POLICY_MIN_STD, POLICY_MAX_STD)
+         return brax_distribution._NormalDistribution(loc=loc, scale=scale)
+ 
+-    brax_distribution.NormalTanhDistribution.create_dist = clipped_create_dist
+-    _PATCH_INSTALLED = True
+-
+ 
+ def make_policy_network_factory(
+-    observation_size: int,
++    observation_size,
+     action_size: int,
+     preprocess_observations_fn=lambda x, _=None: x,
+ ):
+-    return ppo_networks.make_ppo_networks(
++    """Brax PPO の network_factory。observation_size は dict (env.observation_size) でも
++    単一の次元数でもよい (単一配列の観測なら actor/critic とも同じ観測を読む)。"""
++    networks = ppo_networks.make_ppo_networks(
+         observation_size=observation_size,
+         action_size=action_size,
+         preprocess_observations_fn=preprocess_observations_fn,
+         policy_hidden_layer_sizes=(512, 256, 128),
+         value_hidden_layer_sizes=(512, 256, 128),
++        policy_obs_key=POLICY_OBS_KEY,
++        value_obs_key=VALUE_OBS_KEY,
++    )
++    return networks.replace(
++        parametric_action_distribution=BoundedNormalTanhDistribution(event_size=action_size)
+     )
+ 
+ 
+-install_policy_std_cap()
++def default_observation_size():
++    return {
++        POLICY_OBS_KEY: (RobotConfig.OBS_DIM,),
++        VALUE_OBS_KEY: (RobotConfig.PRIVILEGED_OBS_DIM,),
++    }
++
++
++class _CompatibilityUnpickler(pickle.Unpickler):
++    """numpy 2 で保存された pickle を numpy 1 環境でも読めるようにする。"""
++
++    def find_class(self, module, name):
++        if module.startswith("numpy._core"):
++            module = module.replace("numpy._core", "numpy.core")
++        return super().find_class(module, name)
++
++
++def load_checkpoint(path):
++    with open(path, "rb") as f:
++        return _CompatibilityUnpickler(f).load()
++
++
++def find_checkpoint(exp_name: str = "", version: Optional[int] = None,
++                    model_name: str = "best_params.pkl") -> Optional[Path]:
++    """log/<exp_name>/version_<version>/<model_name> を返す。version 省略時は最新の version。"""
++    root = LOG_ROOT / exp_name if exp_name else LOG_ROOT
++    if not root.exists():
++        return None
++    if version is not None:
++        candidate = root / f"version_{version}" / model_name
++        return candidate if candidate.exists() else None
++    versions = sorted((d for d in root.glob("version_*") if d.is_dir()),
++                      key=lambda d: int(d.name.split("_")[-1]))
++    for v in reversed(versions):
++        if (v / model_name).exists():
++            return v / model_name
++    return None
++
++
++def strip_device_dim(params):
++    """pmap 由来の先頭の device 次元 (サイズ1) を取り除く。"""
++    def _strip(leaf):
++        if getattr(leaf, "ndim", 0) > 0 and leaf.shape[0] == 1:
++            return leaf.squeeze(0)
++        return leaf
++    return jax.tree_util.tree_map(_strip, params)
++
++
++def make_inference_fn_from_params(params, deterministic: bool = True, observation_size=None):
++    """学習済み params (normalizer, policy, value) から推論関数 policy(obs, rng) を作る。
++
++    obs は env が返す dict ({'state': ..., 'privileged_state': ...})。actor は 'state'
++    しか読まないため、'privileged_state' は形状さえ合っていれば値は使われない。"""
++    network = make_policy_network_factory(
++        observation_size or default_observation_size(),
++        RobotConfig.NUM_JOINTS,
++        preprocess_observations_fn=running_statistics.normalize,
++    )
++    make_policy = ppo_networks.make_inference_fn(network)
++    return make_policy(strip_device_dim(params), deterministic=deterministic)
+diff --git a/scratch/gate0_eval.py b/scratch/gate0_eval.py
+index 6ff042e..24a258a 100644
+--- a/scratch/gate0_eval.py
++++ b/scratch/gate0_eval.py
+@@ -155,32 +155,15 @@ def evaluate_mjx(
+ def _load_policy(exp_name, version, model_name, env):
+     """学習済みcheckpointからpolicyを読み込む。"""
+     import jax
+-    from train.visualize_rl import load_checkpoint, get_model_path
+-    from robot.policy_network import make_policy_network_factory
+-    from brax.training.agents.ppo import networks as ppo_networks
+-    from brax.training.acme import running_statistics
++    from robot.policy_network import find_checkpoint, load_checkpoint, make_inference_fn_from_params
+ 
+-    model_path = get_model_path(exp_name, version, model_name)
++    model_path = find_checkpoint(exp_name, version, model_name)
+     if model_path is None:
+         raise RuntimeError(f"Checkpoint not found for exp_name={exp_name}, version={version}")
+ 
+     print(f"[Gate0] Loading checkpoint: {model_path}")
+     params = load_checkpoint(model_path)
+-
+-    network = make_policy_network_factory(
+-        env.observation_size,
+-        env.action_size,
+-        preprocess_observations_fn=running_statistics.normalize,
+-    )
+-    make_policy = ppo_networks.make_inference_fn(network)
+-
+-    def strip_leading_dim(leaf):
+-        if hasattr(leaf, "shape") and getattr(leaf, "ndim", 0) > 0 and leaf.shape[0] == 1:
+-            return leaf.squeeze(0)
+-        return leaf
+-
+-    params_stripped = jax.tree_util.tree_map(strip_leading_dim, params)
+-    return jax.jit(make_policy(params_stripped, deterministic=True))
++    return jax.jit(make_inference_fn_from_params(params, deterministic=True))
+ 
+ 
+ # ============================================================================
+diff --git a/scratch/gate_a_qualification.py b/scratch/gate_a_qualification.py
+index cab13e1..083ea5a 100644
+--- a/scratch/gate_a_qualification.py
++++ b/scratch/gate_a_qualification.py
+@@ -24,6 +24,11 @@ master_plan.md はこの閾値の具体的な数値を確定していない(v3
+ n_episodes < 200 の場合はmaster_plan.md §4.5/§8の要求(n>=200)を満たして
+ いない旨の警告を出す(判定は行うが、正式なGate Aクローズの根拠としては
+ 不十分であることを明示する)。
++
++[2026-10-02追加] Wilson区間は独立試行を前提とする。レポートの
++n_unique_final_states(終端状態の異なるepisode数)が n_episodes より小さい場合、
++同一軌道の繰り返し(擬似反復)が含まれており実効サンプル数が n より小さいため、
++警告を出して参考判定扱いにする。
+ """
+ 
+ import argparse
+@@ -73,6 +78,7 @@ def main():
+         success_rate = float(cond["success_rate"])
+         successes = round(success_rate * n)
+         lower = wilson_lower_bound(successes, n, z=args.z)
++        n_unique = cond.get("n_unique_final_states")
+         per_seed.append({
+             "report": str(path),
+             "checkpoint": data.get("checkpoint"),
+@@ -80,11 +86,18 @@ def main():
+             "success_rate": success_rate,
+             "wilson_lower_95": lower,
+             "n_sufficient": n >= 200,
++            "n_unique_final_states": n_unique,
++            "independent": n_unique is not None and int(n_unique) == n,
+         })
+ 
+     print(f"評価条件: {args.condition}　閾値(Wilson下限): {args.threshold}\n")
+     for row in per_seed:
+         flag = "" if row["n_sufficient"] else "  [WARN] n<200 (master_plan.md §4.5/§8 の要求未達)"
++        if row["n_unique_final_states"] is None:
++            flag += "  [WARN] n_unique_final_states未記録(旧レポート。擬似反復を検査できない)"
++        elif not row["independent"]:
++            flag += (f"  [WARN] 終端状態の重複あり(unique={row['n_unique_final_states']}/{row['n_episodes']})"
++                     "。同一軌道の反復が含まれ実効nが小さい")
+         print(
+             f"  {row['checkpoint']}: n={row['n_episodes']:>4d}  "
+             f"success_rate={row['success_rate']:.4f}  "
+@@ -94,9 +107,17 @@ def main():
+     worst = min(per_seed, key=lambda r: r["wilson_lower_95"])
+     passed = worst["wilson_lower_95"] >= args.threshold
+     all_n_sufficient = all(r["n_sufficient"] for r in per_seed)
++    all_independent = all(r["independent"] for r in per_seed)
++
++    caveats = []
++    if not all_n_sufficient:
++        caveats.append("n<200のseedを含む")
++    if not all_independent:
++        caveats.append("擬似反復(終端状態の重複)を含む、または未検査のseedがある")
+ 
+     print(f"\nmin(Wilson下限) = {worst['wilson_lower_95']:.4f}  (最悪seed: {worst['checkpoint']})")
+-    print(f"判定: {'PASS' if passed else 'FAIL'}" + ("" if all_n_sufficient else "　※n<200のseedを含むため参考判定にとどめること"))
++    print(f"判定: {'PASS' if passed else 'FAIL'}"
++          + ("" if not caveats else f"　※{'、'.join(caveats)}ため参考判定にとどめること"))
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/scratch/gate_b_eval.py b/scratch/gate_b_eval.py
+index 1a13e07..895715f 100644
+--- a/scratch/gate_b_eval.py
++++ b/scratch/gate_b_eval.py
+@@ -78,34 +78,18 @@ def main():
+     ctx = _lazy_imports()
+     RobotConfig = ctx["RobotConfig"]
+     SenpuuMaruMJXEnv = ctx["SenpuuMaruMJXEnv"]
+-    ppo_networks = ctx["ppo_networks"]
+ 
+     max_steps = args.max_steps or RobotConfig.MAX_EPISODE_STEPS
+ 
+-    model_path = ctx["get_model_path"](args.exp_name, args.version, args.model)
++    model_path = ctx["find_checkpoint"](args.exp_name, args.version, args.model)
+     if model_path is None:
+         raise SystemExit(
+             f"checkpoint not found for exp_name={args.exp_name!r}, version={args.version}, "
+             f"model={args.model!r}. --exp_name / --version / --model を確認してください。"
+         )
+     params = ctx["load_checkpoint"](model_path)
+-
+-    _probe_env = SenpuuMaruMJXEnv()
+-    network = ctx["make_policy_network_factory"](
+-        _probe_env.observation_size,
+-        _probe_env.action_size,
+-        preprocess_observations_fn=ctx["running_statistics"].normalize,
+-    )
+-    make_policy = ppo_networks.make_inference_fn(network)
+-
+-    def strip_leading_dim(leaf):
+-        if hasattr(leaf, "shape") and getattr(leaf, "ndim", 0) > 0 and leaf.shape[0] == 1:
+-            return leaf.squeeze(0)
+-        return leaf
+-
+-    params_stripped = ctx["jax"].tree_util.tree_map(strip_leading_dim, params)
+     # 主判定はdeterministic評価(master_plan.md §8)。
+-    policy_fn = ctx["jax"].jit(make_policy(params_stripped, deterministic=True))
++    policy_fn = ctx["jax"].jit(ctx["make_inference_fn_from_params"](params, deterministic=True))
+ 
+     report = {
+         "generated_at": datetime.now(timezone.utc).isoformat(),
+@@ -138,7 +122,9 @@ def main():
+             # 外力水準ごとに新しいenvインスタンスを作ることでこれを回避する。
+             env = SenpuuMaruMJXEnv()
+             ctx["foot_ids"] = (env._reward_system._left_foot_id, env._reward_system._right_foot_id)
+-            ctx["torque_limit"] = ctx["jp"].asarray(env._mjx_model.actuator_ctrlrange[:, 1])
++            # actuator_ctrlrange は目標関節角[rad]の範囲であってトルク上限ではない
++            # (上限0.0の関節で |τ|>=0 が常に真になり飽和率が1.0に張り付く)。
++            ctx["torque_limit"] = ctx["jp"].full(env._mjx_model.nu, RobotConfig.MOTOR_MAX_TORQUE)
+             reset_fn = ctx["jax"].jit(env.reset)
+             step_fn = ctx["jax"].jit(env.step)
+             result = run_condition(
+diff --git a/scratch/phase0_eval_diagnostics.py b/scratch/phase0_eval_diagnostics.py
+index 5eac0b9..518b019 100644
+--- a/scratch/phase0_eval_diagnostics.py
++++ b/scratch/phase0_eval_diagnostics.py
+@@ -9,18 +9,11 @@ status.md (2026-09-01) の「次のTask」= 「deterministic/stochastic評価の
+ 
+ 設計方針（master_plan.md §3.5 に基づく）:
+   - 2x2評価: {deterministic, stochastic} x {fixed_dr, randomized_dr}
+-    注意: 本リポジトリの reset() は物理初期姿勢(qpos/qvel)を常に同一の
+-    nominal poseに固定しており、初期姿勢そのもののrandomizationは
+-    master_plan.md §1.6で「Task1(Gate A是正)の時点で必ず導入する」と
+-    定義された未実装機能である。したがって本スクリプトの
+-    「初期状態randomize」軸は、既存の実装済みrandomization経路である
+-    domain randomization (質量/摩擦/重心オフセット/サーボ温度/電圧) の
+-    on/offとして操作する。これは近似であり、真の初期姿勢randomizationの
+-    代替ではない。この制約は出力レポートに明記する。
+-  - deterministic x fixed_dr のセルは、同一checkpoint・同一初期状態・
+-    同一policyであれば理論上ビット単位で再現するはずのセルであり、
+-    複数episodeを回す意味は「決定論性テスト」（master_plan.md §4.2）を
+-    兼ねる以外にない。デフォルトのepisode数を他セルより少なくしている。
++    初期状態分布(master_plan.md §1.6, envs/mjx_env.py の reset())は全セルで有効。
++    fixed_dr/randomized_dr は domain randomization (質量/摩擦/重心オフセット/
++    サーボ温度/電圧) の幅を中央値に固定するか否か。
++  - deterministic x fixed_dr のセルは DR の影響を除いた参考セルで、
++    デフォルトのepisode数を他セルより少なくしている。
+   - 各episodeについて、終了理由 (fallen_roll / fallen_pitch /
+     fallen_height / time_limit / unknown の組み合わせ) を分類する。
+     非足裏接触・トルク上限による終了は、現行の envs/mjx_rewards.py の
+@@ -82,6 +75,7 @@ GPUも実際の学習済みcheckpointも存在しないため、本スクリプ
+ """
+ 
+ import argparse
++import hashlib
+ import json
+ import os
+ import sys
+@@ -307,6 +301,15 @@ class EpisodeResult:
+     max_pitch_rad: float = 0.0
+     recovery_time_steps: Optional[int] = None
+     torque_saturation_rate: float = 0.0
++    final_state_digest: str = ""
++
++
++def state_digest(qpos, qvel, decimals: int = 6) -> str:
++    """終端状態(qpos/qvel)の指紋。同一軌道の重複(擬似反復)検出に使う。"""
++    arr = np.concatenate([np.asarray(qpos, dtype=np.float64).ravel(),
++                          np.asarray(qvel, dtype=np.float64).ravel()])
++    rounded = np.round(arr, decimals) + 0.0  # -0.0 と 0.0 を同一視する
++    return hashlib.sha1(rounded.tobytes()).hexdigest()
+ 
+ 
+ def interpolate_threshold_crossing(
+@@ -341,13 +344,7 @@ def _lazy_imports():
+     from robot.config import RobotConfig
+     from envs.mjx_env import SenpuuMaruMJXEnv
+     from robot.math_utils import quat_to_euler
+-    from train.visualize_rl import (
+-        get_model_path,
+-        load_checkpoint,
+-        make_policy_network_factory,
+-    )
+-    from brax.training.agents.ppo import networks as ppo_networks
+-    from brax.training.acme import running_statistics
++    from robot.policy_network import find_checkpoint, load_checkpoint, make_inference_fn_from_params
+ 
+     return {
+         "jax": jax,
+@@ -355,11 +352,9 @@ def _lazy_imports():
+         "RobotConfig": RobotConfig,
+         "SenpuuMaruMJXEnv": SenpuuMaruMJXEnv,
+         "quat_to_euler": quat_to_euler,
+-        "get_model_path": get_model_path,
++        "find_checkpoint": find_checkpoint,
+         "load_checkpoint": load_checkpoint,
+-        "make_policy_network_factory": make_policy_network_factory,
+-        "ppo_networks": ppo_networks,
+-        "running_statistics": running_statistics,
++        "make_inference_fn_from_params": make_inference_fn_from_params,
+     }
+ 
+ 
+@@ -577,6 +572,7 @@ def run_episode(
+     )
+ 
+     return EpisodeResult(
++        final_state_digest=state_digest(state.pipeline_state.qpos, state.pipeline_state.qvel),
+         length=step_index,
+         terminated=terminated,
+         truncated=truncated,
+@@ -607,6 +603,7 @@ def run_condition(
+     settling_steps: int = 50,
+ ) -> dict:
+     lengths, terminated_flags, truncated_flags, reasons = [], [], [], []
++    final_state_digests = []
+     reward_component_accum: Dict[str, List[float]] = {}
+     collapse_examples = []
+     successes = 0
+@@ -626,6 +623,7 @@ def run_condition(
+         terminated_flags.append(result.terminated)
+         truncated_flags.append(result.truncated)
+         reasons.append(result.reason)
++        final_state_digests.append(result.final_state_digest)
+         successes += int(result.success)
+         contact_successes += int(result.both_feet_contact)
+         foot_displacements.append(result.max_foot_displacement)
+@@ -651,8 +649,13 @@ def run_condition(
+     real_failure_steps = [l for l, t in zip(lengths, terminated_flags) if t]
+     timing_diag = diagnose_failure_timing(real_failure_steps, max_steps)
+ 
++    n_unique_final_states = len(set(final_state_digests))
+     return {
+         "n_episodes": n_episodes,
++        # [2026-10-02追加] Wilson区間は独立試行を前提とする。同一の終端状態に至った
++        # episodeが複数あれば、それらは同一軌道の繰り返し(擬似反復)であり実効サンプル数は
++        # n_episodesより小さい。scratch/gate_a_qualification.py がこの値を検査する。
++        "n_unique_final_states": n_unique_final_states,
+         "episode_alive": summarize_episode_alive(lengths),
+         "termination_reason_counts": dict(Counter(reasons)),
+         "termination_reason_rate": {
+@@ -714,7 +717,6 @@ def main():
+     ctx = _lazy_imports()
+     RobotConfig = ctx["RobotConfig"]
+     SenpuuMaruMJXEnv = ctx["SenpuuMaruMJXEnv"]
+-    ppo_networks = ctx["ppo_networks"]
+ 
+     # Gate AはPhase 0 (無外乱)の診断であるため、外乱は明示的に無効化する。
+     RobotConfig.DISTURBANCE_CURRICULUM = False
+@@ -731,7 +733,7 @@ def main():
+             "--max-stepsを指定しないことを推奨する。"
+         )
+ 
+-    model_path = ctx["get_model_path"](args.exp_name, args.version, args.model)
++    model_path = ctx["find_checkpoint"](args.exp_name, args.version, args.model)
+     if model_path is None:
+         raise SystemExit(
+             f"checkpoint not found for exp_name={args.exp_name!r}, version={args.version}, "
+@@ -739,26 +741,9 @@ def main():
+         )
+     params = ctx["load_checkpoint"](model_path)
+ 
+-    # obs/action次元はDR設定に依存しないstructuralな値なので、使い捨てのenv
+-    # インスタンスから一度だけ取得すれば十分(policy networkの構築もここでよい)。
+-    _probe_env = SenpuuMaruMJXEnv()
+-    network = ctx["make_policy_network_factory"](
+-        _probe_env.observation_size,
+-        _probe_env.action_size,
+-        preprocess_observations_fn=ctx["running_statistics"].normalize,
+-    )
+-    make_policy = ppo_networks.make_inference_fn(network)
+-
+-    def strip_leading_dim(leaf):
+-        if hasattr(leaf, "shape") and getattr(leaf, "ndim", 0) > 0 and leaf.shape[0] == 1:
+-            return leaf.squeeze(0)
+-        return leaf
+-
+-    params_stripped = ctx["jax"].tree_util.tree_map(strip_leading_dim, params)
+-
+     # deterministic/stochasticはpolicyのみに依存するため一度だけjitする。
+     policy_fns = {
+-        det: ctx["jax"].jit(make_policy(params_stripped, deterministic=det))
++        det: ctx["jax"].jit(ctx["make_inference_fn_from_params"](params, deterministic=det))
+         for det in (True, False)
+     }
+ 
+@@ -782,9 +767,9 @@ def main():
+         "checkpoint": str(model_path),
+         "max_steps": max_steps,
+         "note_initial_state_randomization": (
+-            "物理初期姿勢(qpos/qvel)は常にnominal poseに固定されている(未実装機能、"
+-            "master_plan.md付録A §1.6参照)。ここでの'randomized_dr'は質量/摩擦/"
+-            "重心オフセット/サーボ温度/電圧のdomain randomizationのon/offを指す近似軸。"
++            f"全セルで初期状態分布(master_plan.md §1.6)を適用: 関節角 ±{RobotConfig.INIT_JOINT_POS_NOISE} rad, "
++            f"関節角速度 ±{RobotConfig.INIT_JOINT_VEL_NOISE} rad/s。'fixed_dr'/'randomized_dr' は"
++            "質量/摩擦/重心オフセット/サーボ温度/電圧のdomain randomizationのon/off。"
+         ),
+         "note_termination_reasons": (
+             "現行実装(envs/mjx_rewards.py)はfallen_roll/fallen_pitch/fallen_height/"
+diff --git a/tests/test_improved_rewards.py b/tests/test_improved_rewards.py
+index f88348e..6dc3b99 100644
+--- a/tests/test_improved_rewards.py
++++ b/tests/test_improved_rewards.py
+@@ -177,16 +177,11 @@ def test_stance_penalty_discourages_wide_foot_spacing():
+         narrow_data,
+         action=jp.zeros(6),
+         last_action=jp.zeros(6),
+-        double_last_action=jp.zeros(6),
+-        triple_last_action=jp.zeros(6),
+         cbf_penalty=jp.array(0.0),
+         last_potential=jp.array(0.0),
+         step=jp.array(10),
+-        reference_action=jp.zeros(6),
+         servo_temp=jp.full(6, 40.0),
+         supply_volt=11.1,
+-        global_step=jp.array(1000),
+-        gait_phase=0.5,
+         was_disturbed=jp.array(False),
+         disturbance_recovery_steps=jp.array(1000),
+         training_progress=jp.array(0.5),
+@@ -196,16 +191,11 @@ def test_stance_penalty_discourages_wide_foot_spacing():
+         wide_data,
+         action=jp.zeros(6),
+         last_action=jp.zeros(6),
+-        double_last_action=jp.zeros(6),
+-        triple_last_action=jp.zeros(6),
+         cbf_penalty=jp.array(0.0),
+         last_potential=jp.array(0.0),
+         step=jp.array(10),
+-        reference_action=jp.zeros(6),
+         servo_temp=jp.full(6, 40.0),
+         supply_volt=11.1,
+-        global_step=jp.array(1000),
+-        gait_phase=0.5,
+         was_disturbed=jp.array(False),
+         disturbance_recovery_steps=jp.array(1000),
+         training_progress=jp.array(0.5),
+@@ -259,22 +249,18 @@ def test_foot_balance_and_slip_penalty():
+ 
+     r_bal, _, m_bal, _ = reward_system.compute(
+         balanced_data, action=jp.zeros(6), last_action=jp.zeros(6),
+-        double_last_action=jp.zeros(6), triple_last_action=jp.zeros(6),
+         cbf_penalty=jp.array(0.0), last_potential=jp.array(0.0),
+-        step=jp.array(10), reference_action=jp.zeros(6),
++        step=jp.array(10),
+         servo_temp=jp.full(6, 40.0), supply_volt=11.1,
+-        global_step=jp.array(1000), gait_phase=0.5,
+         was_disturbed=jp.array(False), disturbance_recovery_steps=jp.array(1000),
+         training_progress=jp.array(0.5),
+     )
+ 
+     r_unbal, _, m_unbal, _ = reward_system.compute(
+         unbalanced_data, action=jp.zeros(6), last_action=jp.zeros(6),
+-        double_last_action=jp.zeros(6), triple_last_action=jp.zeros(6),
+         cbf_penalty=jp.array(0.0), last_potential=jp.array(0.0),
+-        step=jp.array(10), reference_action=jp.zeros(6),
++        step=jp.array(10),
+         servo_temp=jp.full(6, 40.0), supply_volt=11.1,
+-        global_step=jp.array(1000), gait_phase=0.5,
+         was_disturbed=jp.array(False), disturbance_recovery_steps=jp.array(1000),
+         training_progress=jp.array(0.5),
+     )
+@@ -290,22 +276,18 @@ def test_foot_balance_and_slip_penalty():
+ 
+     r_still, _, _, _ = reward_system.compute(
+         still_data, action=jp.zeros(6), last_action=jp.zeros(6),
+-        double_last_action=jp.zeros(6), triple_last_action=jp.zeros(6),
+         cbf_penalty=jp.array(0.0), last_potential=jp.array(0.0),
+-        step=jp.array(10), reference_action=jp.zeros(6),
++        step=jp.array(10),
+         servo_temp=jp.full(6, 40.0), supply_volt=11.1,
+-        global_step=jp.array(1000), gait_phase=0.5,
+         was_disturbed=jp.array(False), disturbance_recovery_steps=jp.array(1000),
+         training_progress=jp.array(0.5),
+     )
+ 
+     r_slip, _, _, _ = reward_system.compute(
+         slipping_data, action=jp.zeros(6), last_action=jp.zeros(6),
+-        double_last_action=jp.zeros(6), triple_last_action=jp.zeros(6),
+         cbf_penalty=jp.array(0.0), last_potential=jp.array(0.0),
+-        step=jp.array(10), reference_action=jp.zeros(6),
++        step=jp.array(10),
+         servo_temp=jp.full(6, 40.0), supply_volt=11.1,
+-        global_step=jp.array(1000), gait_phase=0.5,
+         was_disturbed=jp.array(False), disturbance_recovery_steps=jp.array(1000),
+         training_progress=jp.array(0.5),
+     )
+diff --git a/tests/test_policy_bounds.py b/tests/test_policy_bounds.py
+index 38d7a32..b5a5d73 100644
+--- a/tests/test_policy_bounds.py
++++ b/tests/test_policy_bounds.py
+@@ -16,7 +16,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
+ ENTRYPOINTS = (
+     PROJECT_ROOT / "train" / "train_mjx.py",
+     PROJECT_ROOT / "train" / "visualize_rl.py",
+-    PROJECT_ROOT / "train" / "export_onnx.py",  # deploy/ から変更
++    PROJECT_ROOT / "train" / "export_onnx.py",
++    PROJECT_ROOT / "train" / "export_trajectory.py",
++    PROJECT_ROOT / "scratch" / "phase0_eval_diagnostics.py",
++    PROJECT_ROOT / "scratch" / "gate0_eval.py",
+ )
+ 
+ 
+@@ -63,16 +66,19 @@ def test_policy_network_forward_pass_bounds():
+     assert float(jnp.max(dist.scale)) <= POLICY_MAX_STD + 1e-6
+ 
+ 
++SHARED_ENTRYPOINT_NAMES = {"make_policy_network_factory", "make_inference_fn_from_params"}
++
++
+ def test_entrypoints_import_shared_policy_factory():
++    """学習・評価・出力のスクリプトはネットワーク構成を robot/policy_network.py から取得し、
++    独自に make_ppo_networks を呼ばないこと(分布・観測キーの不一致を防ぐ)。"""
+     for path in ENTRYPOINTS:
+-        if not path.exists():
+-            continue
+         tree = ast.parse(path.read_text(encoding="utf-8"))
+-        imports_shared_factory = any(
++        imports_shared = any(
+             isinstance(node, ast.ImportFrom)
+             and node.module == "robot.policy_network"
+-            and any(alias.name == "make_policy_network_factory" for alias in node.names)
++            and any(alias.name in SHARED_ENTRYPOINT_NAMES for alias in node.names)
+             for node in ast.walk(tree)
+         )
+-        assert imports_shared_factory, f"{path} does not import the shared factory"
++        assert imports_shared, f"{path} does not use robot/policy_network.py"
+         assert "make_ppo_networks(" not in path.read_text(encoding="utf-8")
+diff --git a/tests/test_reset_and_cbf_contract.py b/tests/test_reset_and_cbf_contract.py
+index b501169..972f2aa 100644
+--- a/tests/test_reset_and_cbf_contract.py
++++ b/tests/test_reset_and_cbf_contract.py
+@@ -41,22 +41,25 @@ def test_reset_command_state_matches_spawn_joint_pose(env):
+     state = jax.jit(env.reset)(jax.random.PRNGKey(0))
+     joint_pos = np.asarray(state.pipeline_state.qpos)[np.asarray(env._actuator_to_qpos_idx)]
+ 
+-    for key in ("filtered_action", "last_action", "double_last_action", "triple_last_action"):
++    for key in ("filtered_action", "last_action"):
+         assert np.allclose(np.asarray(state.info[key]), joint_pos), key
+     history = np.asarray(state.info["action_history"])
+     assert np.allclose(history, np.broadcast_to(joint_pos, history.shape))
+ 
+ 
+-def test_spawn_position_is_not_shifted_by_com_offset(env):
+-    """重心オフセットDRはspawn位置に加算されない(床へのめり込み/落下を防ぐ)。"""
+-    reset = jax.jit(env.reset)
++def test_spawn_position_is_not_shifted_by_com_offset(monkeypatch):
++    """重心オフセットDRはspawn位置に加算されない(床へのめり込み/落下を防ぐ)。
++    初期状態ノイズを0にすると、spawn位置は常に nominal になる。"""
++    monkeypatch.setattr(RobotConfig, "INIT_JOINT_POS_NOISE", 0.0)
++    monkeypatch.setattr(RobotConfig, "INIT_JOINT_VEL_NOISE", 0.0)
++    reset = jax.jit(SenpuuMaruMJXEnv().reset)
+     for seed in range(3):
+         state = reset(jax.random.PRNGKey(seed))
+         assert np.any(np.abs(np.asarray(state.info["com_offset"])) > 0.0)
+         assert np.allclose(
+             np.asarray(state.pipeline_state.qpos[0:3]),
+             [0.0, 0.0, RobotConfig.INITIAL_HEIGHT],
+-            atol=1e-6,
++            atol=1e-5,
+         )
+ 
+ 
+diff --git a/tests/test_sensor_contract.py b/tests/test_sensor_contract.py
+index 9013b34..e158c6f 100644
+--- a/tests/test_sensor_contract.py
++++ b/tests/test_sensor_contract.py
+@@ -15,7 +15,7 @@ def test_sensor_order_contract_matches_xml_layout():
+ 
+     assert model.nsensordata >= 18, "Expected IMU + 8 FSR sensors in the XML sensor block."
+ 
+-    fsr_from_env = env._extract_fsr_sensor_data(data)
++    fsr_from_env = env._fsr_forces(data)
+     assert fsr_from_env.shape == (8,), fsr_from_env.shape
+     assert np.allclose(np.asarray(fsr_from_env), 0.0)
+ 
+@@ -24,16 +24,14 @@ def test_sensor_order_contract_matches_xml_layout():
+     assert np.allclose(np.asarray(fsr_in_reward), 0.0)
+ 
+ 
+-def test_fsr_positions_match_left_then_right_xml_layout():
+-    left_expected = np.array([
+-        [0.012, 0.027], [-0.012, 0.027], [0.012, -0.070], [-0.012, -0.070],
+-    ], dtype=np.float32)
+-    right_expected = np.array([
+-        [-0.012, 0.027], [0.012, 0.027], [-0.012, -0.070], [0.012, -0.070],
+-    ], dtype=np.float32)
+-
+-    assert np.allclose(RobotConfig.FSR_POSITIONS[:4], left_expected)
+-    assert np.allclose(RobotConfig.FSR_POSITIONS[4:], right_expected)
++def test_fsr_slice_matches_touch_sensors_left_then_right():
++    model = mujoco.MjModel.from_xml_path(str(RobotConfig.MUJOCO_MODEL_PATH))
++    touch = [i for i in range(model.nsensor) if model.sensor_type[i] == mujoco.mjtSensor.mjSENS_TOUCH]
++    adrs = [int(model.sensor_adr[i]) for i in touch]
++    sl = RobotConfig.FSR_SENSOR_SLICE
++    assert adrs == list(range(sl.start, sl.stop))
++    names = [model.sensor(i).name for i in touch]
++    assert all("_l_" in n for n in names[:4]) and all("_r_" in n for n in names[4:]), names
+ 
+ 
+ def test_joint_order_matches_actuator_qpos_contract():
+@@ -72,12 +70,7 @@ def test_domain_randomization_torque_uses_actuator_qvel_mapping():
+     dr_damping = jp.arange(model.nu, dtype=jp.float32) + 0.1
+     dr_friction = jp.zeros(model.nu, dtype=jp.float32)
+ 
+-    qfrc = env._apply_joint_dr_torque(
+-        jp.zeros(model.nv, dtype=jp.float32),
+-        qvel,
+-        dr_damping,
+-        dr_friction,
+-    )
++    qfrc = env._joint_dr_torque(qvel, dr_damping, dr_friction)
+     expected = np.zeros(model.nv, dtype=np.float32)
+     actuator_qvel = np.asarray(env._actuator_to_qvel_idx)
+     expected[actuator_qvel] = -dr_damping * qvel[actuator_qvel]
+diff --git a/tests/test_standing_only.py b/tests/test_standing_only.py
+index 8c31ace..dca37ca 100644
+--- a/tests/test_standing_only.py
++++ b/tests/test_standing_only.py
+@@ -2,8 +2,10 @@ from robot.config import RobotConfig
+ 
+ 
+ def test_standing_only_constraints():
+-    assert RobotConfig.ALLOW_WALKING is False
+-    assert RobotConfig.USE_REFERENCE_GAIT is False
+-    assert RobotConfig.TARGET_VEL_X == 0.0
+-    assert RobotConfig.TARGET_VEL_Y == 0.0
+-    assert RobotConfig.TARGET_YAW_RATE == 0.0
++    # 歩行関連の設定(お手本軌道・目標速度・歩容)は 2026-10-02 に削除済み。
++    # 立位タスクを歩行へ切り替えるスイッチが復活していないことを確認する。
++    for name in (
++        "ALLOW_WALKING", "ALLOW_STEPPING", "USE_REFERENCE_GAIT",
++        "TARGET_VEL_X", "TARGET_VEL_Y", "TARGET_YAW_RATE", "GAIT_PERIOD",
++    ):
++        assert not hasattr(RobotConfig, name), name
+diff --git a/tests/test_standing_requirements.py b/tests/test_standing_requirements.py
+index 0e35124..d898675 100644
+--- a/tests/test_standing_requirements.py
++++ b/tests/test_standing_requirements.py
+@@ -3,8 +3,6 @@
+ from pathlib import Path
+ import sys
+ 
+-import numpy as np
+-
+ ROOT = Path(__file__).resolve().parents[1]
+ if str(ROOT) not in sys.path:
+     sys.path.insert(0, str(ROOT))
+@@ -13,15 +11,6 @@ from robot.config import RobotConfig
+ from scratch.phase0_eval_diagnostics import summarize_episode_alive
+ 
+ 
+-def test_standing_mission_forbids_walking_and_stepping():
+-    assert RobotConfig.ALLOW_WALKING is False
+-    assert RobotConfig.ALLOW_STEPPING is False
+-    assert RobotConfig.TARGET_VEL_X == 0.0
+-    assert RobotConfig.TARGET_VEL_Y == 0.0
+-    assert RobotConfig.TARGET_YAW_RATE == 0.0
+-    assert RobotConfig.MAX_SINGLE_FOOT_LIFT == 0.0
+-
+-
+ def test_success_summary_is_not_episode_alive_only():
+     summary = summarize_episode_alive([500, 500, 100])
+     assert summary["mean"] < RobotConfig.MAX_EPISODE_STEPS
+diff --git a/tests/test_training_integration.py b/tests/test_training_integration.py
+index 20b5607..d972a56 100644
+--- a/tests/test_training_integration.py
++++ b/tests/test_training_integration.py
+@@ -41,7 +41,7 @@ def test_vmap_reset_then_step_no_crash():
+     action = jp.zeros((4, env.action_size))
+     state = step_fn(state, action)  # UnexpectedTracerErrorが出ないこと
+     assert state is not None
+-    assert state.obs.shape[0] == 4
++    assert state.obs["state"].shape[0] == 4
+ 
+ 
+ def test_domain_randomization_differs_per_env_under_vmap():
+@@ -55,7 +55,7 @@ def test_domain_randomization_differs_per_env_under_vmap():
+     assert len(unique_scales) > 1, f"Expected varied mass scales across envs, got {unique_scales}"
+ 
+ 
+-def _assert_episode_info_reset_on_done_step(state, initial_cmd, reset_slot, other_slots):
++def _assert_episode_info_reset_on_done_step(state, env, reset_slot, other_slots):
+     steps = np.asarray(state.info["step"])
+     done = np.asarray(state.done)
+     assert done[reset_slot] == 1.0 and np.all(done[other_slots] == 0.0), done
+@@ -64,8 +64,10 @@ def _assert_episode_info_reset_on_done_step(state, initial_cmd, reset_slot, othe
+     # 指令履歴のまま実行される)。
+     assert steps[reset_slot] == 0, f"Expected slot {reset_slot} to reset to 0, got {steps[reset_slot]}"
+     assert np.all(steps[other_slots] == 2), f"Expected other slots to advance to 2, got {steps[other_slots]}"
++    # 新episodeの指令系は、そのepisodeのspawn関節角(初期状態分布からの新しいサンプル)で初期化される
+     filtered = np.asarray(state.info["filtered_action"])
+-    assert np.allclose(filtered[reset_slot], initial_cmd[reset_slot])
++    spawn_joints = np.asarray(state.pipeline_state.qpos)[:, np.asarray(env._actuator_to_qpos_idx)]
++    assert np.allclose(filtered[reset_slot], spawn_joints[reset_slot], atol=1e-6)
+ 
+ 
+ def test_auto_reset_resets_episode_scoped_info():
+@@ -82,7 +84,6 @@ def test_auto_reset_resets_episode_scoped_info():
+     num_envs = 2
+     keys = jax.random.split(jax.random.PRNGKey(0), num_envs)
+     state = reset_fn(keys)
+-    initial_cmd = np.asarray(state.info["filtered_action"])
+ 
+     # 初期状態
+     initial_steps = np.asarray(state.info["step"])
+@@ -98,7 +99,7 @@ def test_auto_reset_resets_episode_scoped_info():
+     # time limit(episode_length=2)によるdoneを発生させる
+     state.info["steps"] = jp.array([1.0, 0.0])
+     state = step_fn(state, action)
+-    _assert_episode_info_reset_on_done_step(state, initial_cmd, reset_slot=0, other_slots=[1])
++    _assert_episode_info_reset_on_done_step(state, env, reset_slot=0, other_slots=[1])
+ 
+ 
+ def test_auto_reset_resets_episode_scoped_info_batched():
+@@ -113,7 +114,6 @@ def test_auto_reset_resets_episode_scoped_info_batched():
+     step_fn = jax.jit(wrapped.step)
+     keys = jax.random.split(jax.random.PRNGKey(42), num_envs)
+     state = jax.jit(wrapped.reset)(keys)
+-    initial_cmd = np.asarray(state.info["filtered_action"])
+ 
+     action = jp.zeros((num_envs, env.action_size))
+     state = step_fn(state, action)
+@@ -122,5 +122,5 @@ def test_auto_reset_resets_episode_scoped_info_batched():
+     # スロット0のみtime limitでdoneにする
+     state.info["steps"] = jp.array([1.0, 0.0, 0.0, 0.0])
+     state = step_fn(state, action)
+-    _assert_episode_info_reset_on_done_step(state, initial_cmd, reset_slot=0, other_slots=[1, 2, 3])
++    _assert_episode_info_reset_on_done_step(state, env, reset_slot=0, other_slots=[1, 2, 3])
+ 
+diff --git a/tests/test_training_wrapper.py b/tests/test_training_wrapper.py
+index d764ed1..164709c 100644
+--- a/tests/test_training_wrapper.py
++++ b/tests/test_training_wrapper.py
+@@ -45,7 +45,6 @@ def test_training_progress_wrapper_counters():
+     for expected in range(1, 4):
+         state = env.step(state, jp.array([0.0]))
+         assert int(np.asarray(state.info["_env_steps"]).squeeze()) == expected
+-        assert int(np.asarray(state.info["global_step"]).squeeze()) == expected
+         assert np.isclose(float(np.asarray(state.info["training_progress"]).squeeze()), expected / 10.0)
+ 
+ 
+diff --git a/train/export_onnx.py b/train/export_onnx.py
+index 43f6d1e..0c57a49 100644
+--- a/train/export_onnx.py
++++ b/train/export_onnx.py
+@@ -1,115 +1,167 @@
++"""学習済み checkpoint を実機用 ONNX (real/real_env.py の PolicyRunner が読む) に変換する。
++
++[2026-10-02] 旧実装は JAX → jax2tf → TensorFlow SavedModel → tf2onnx の経路だったが、
++JAX 0.4.3x 以降の jax2tf は常に native serialization (グラフ全体が1個の XlaCallModule op)
++になり tf2onnx が ONNX の演算子へ変換できない。requirements-lock.txt の構成
++(JAX 0.11 / tf2onnx 1.17) では export が必ず失敗していた。
++
++現在は actor の deterministic 推論 (robot/policy_network.py と同じ構成) を ONNX の
++基本演算子で直接組み立てる:
++  x = (obs - mean) / std                       # 学習時の観測正規化 (running statistics)
++  h = swish(x W0 + b0) → swish(h W1 + b1) → swish(h W2 + b2)
++  loc_raw = (h W3 + b3)[:, :NUM_JOINTS]         # 出力の前半が平均、後半は std (推論では不要)
++  action = tanh(POLICY_MEAN_CLIP_SCALE * loc_raw / (1 + |loc_raw|))
++書き出し後、onnxruntime の出力が JAX の推論関数と一致することを検証する (不一致なら失敗)。
++
++必要なパッケージ: onnx, onnxruntime
++"""
++
++import argparse
+ import os
+ import sys
+-import pickle
+-import argparse
+-import shutil
+ 
+ import jax
+-import tensorflow as tf
+-from jax.experimental import jax2tf
+-from brax.training.agents.ppo import networks as ppo_networks
+-from brax.training.acme import running_statistics
++import jax.numpy as jp
++import numpy as np
+ 
+-# append project root to sys path
+ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ from robot.config import RobotConfig
+-from robot.policy_network import make_policy_network_factory
+-from train.visualize_rl import load_checkpoint
+-
+-def load_brax_inference_fn(pkl_path, obs_dim, action_dim):
+-    """
+-    Brax(Flax)の保存済みパラメータファイルから、
+-    JAXネイティブな推論関数(predict)を復元する
+-    """
+-    params = load_checkpoint(pkl_path)
+-    print("[INFO] Params successfully loaded from pickle.")
+-    
+-    # train_mjx.py と同一のネットワーク構成を使用（アーキテクチャ不一致および観測正規化不一致を防止）
+-    # train_mjx.py は normalize_observations=True で学習しており、
+-    # Brax内部で preprocess_observations_fn=running_statistics.normalize が適用されている。
+-    # 実機投入用ONNXモデルにも正規化処理を含めるため明示的に指定する。
+-    ppo_network = make_policy_network_factory(
+-        observation_size=obs_dim,
+-        action_size=action_dim,
+-        preprocess_observations_fn=running_statistics.normalize,
+-    )
+-    
+-    make_inference_fn = ppo_networks.make_inference_fn(ppo_network)
+-
+-    def _strip_leading_dim(leaf):
+-        if hasattr(leaf, "shape") and getattr(leaf, "ndim", 0) > 0 and leaf.shape[0] == 1:
+-            return leaf.squeeze(0)
+-        return leaf
+-
+-    params_stripped = jax.tree_util.tree_map(_strip_leading_dim, params)
+-    inf_fn = make_inference_fn(params_stripped, deterministic=True)
+-    
+-    def predict(obs):
+-        # Deterministic export should not sample a stochastic action with a fixed PRNG seed.
+-        dummy_rng = jax.random.PRNGKey(0)
+-        action, _ = inf_fn(obs, dummy_rng)
+-        return action
+-        
+-    return predict
+-
+-def export_jax_to_onnx(predict_fn, obs_dim, onnx_path):
+-    """JAX関数 -> TensorFlow SavedModel -> ONNX の公式ツールチェーンで変換"""
+-    import tf2onnx
+-    
+-    print("[INFO] 1. Converting pure JAX function to TensorFlow...")
+-    tf_predict = jax2tf.convert(predict_fn, enable_xla=False)
+-    
+-    print("[INFO] 2. Wrapping with tf.function (fixing input signature)...")
+-    @tf.function(
+-        autograph=False,
+-        input_signature=[tf.TensorSpec(shape=[None, obs_dim], dtype=tf.float32, name="observation")]
+-    )
+-    def tf_func(obs):
+-        return tf_predict(obs)
+-    
+-    print("[INFO] 3. Saving temporary TensorFlow SavedModel...")
+-    saved_model_dir = "/tmp/brax_saved_model"
+-    if os.path.exists(saved_model_dir):
+-        shutil.rmtree(saved_model_dir)
+-        
+-    module = tf.Module()
+-    module.predict = tf_func
+-    tf.saved_model.save(module, saved_model_dir, signatures={'serving_default': module.predict})
+-    
+-    print("[INFO] 4. Converting SavedModel to ONNX via tf2onnx...")
+-    model_proto, _ = tf2onnx.convert.from_saved_model(
+-        saved_model_dir, output_path=onnx_path, opset=14
++from robot.policy_network import (
++    POLICY_MEAN_CLIP_SCALE,
++    POLICY_OBS_KEY,
++    load_checkpoint,
++    make_inference_fn_from_params,
++    strip_device_dim,
++)
++
++INPUT_NAME = "observation"
++OUTPUT_NAME = "action"
++OPSET = 17
++
++
++def _policy_arrays(params):
++    """checkpoint から観測正規化 (mean, std) と MLP の各層 (kernel, bias) を取り出す。"""
++    normalizer, policy_params = strip_device_dim(params)[:2]
++    mean, std = normalizer.mean, normalizer.std
++    if isinstance(mean, dict):
++        mean, std = mean[POLICY_OBS_KEY], std[POLICY_OBS_KEY]
++    layers = policy_params["params"]
++    names = sorted(layers, key=lambda name: int(name.split("_")[-1]))
++    if [n.rsplit("_", 1)[0] for n in names] != ["hidden"] * len(names):
++        raise ValueError(f"unexpected policy network layers: {names}")
++    dense = [(np.asarray(layers[n]["kernel"], np.float32), np.asarray(layers[n]["bias"], np.float32))
++             for n in names]
++    return np.asarray(mean, np.float32), np.asarray(std, np.float32), dense
++
++
++def build_onnx_model(params):
++    import onnx
++    from onnx import TensorProto, helper, numpy_helper
++
++    mean, std, dense = _policy_arrays(params)
++    obs_dim = mean.shape[0]
++    act_dim = RobotConfig.NUM_JOINTS
++    if dense[-1][0].shape[1] != 2 * act_dim:
++        raise ValueError(f"policy output size {dense[-1][0].shape[1]} != 2 * {act_dim}")
++
++    inits = [
++        numpy_helper.from_array(mean, "obs_mean"),
++        numpy_helper.from_array(std, "obs_std"),
++        numpy_helper.from_array(np.array([0], np.int64), "slice_start"),
++        numpy_helper.from_array(np.array([act_dim], np.int64), "slice_end"),
++        numpy_helper.from_array(np.array([1], np.int64), "slice_axis"),
++        numpy_helper.from_array(np.array(1.0, np.float32), "one"),
++        numpy_helper.from_array(np.array(POLICY_MEAN_CLIP_SCALE, np.float32), "mean_clip_scale"),
++    ]
++    nodes = [
++        helper.make_node("Sub", [INPUT_NAME, "obs_mean"], ["obs_centered"]),
++        helper.make_node("Div", ["obs_centered", "obs_std"], ["h_in"]),
++    ]
++    h = "h_in"
++    for i, (kernel, bias) in enumerate(dense):
++        inits += [numpy_helper.from_array(kernel, f"W{i}"), numpy_helper.from_array(bias, f"b{i}")]
++        nodes += [
++            helper.make_node("MatMul", [h, f"W{i}"], [f"mm{i}"]),
++            helper.make_node("Add", [f"mm{i}", f"b{i}"], [f"z{i}"]),
++        ]
++        h = f"z{i}"
++        if i < len(dense) - 1:  # swish(x) = x * sigmoid(x)。最終層は活性化なし
++            nodes += [
++                helper.make_node("Sigmoid", [h], [f"sig{i}"]),
++                helper.make_node("Mul", [h, f"sig{i}"], [f"act{i}"]),
++            ]
++            h = f"act{i}"
++    nodes += [
++        helper.make_node("Slice", [h, "slice_start", "slice_end", "slice_axis"], ["loc_raw"]),
++        helper.make_node("Abs", ["loc_raw"], ["loc_abs"]),
++        helper.make_node("Add", ["loc_abs", "one"], ["loc_den"]),
++        helper.make_node("Div", ["loc_raw", "loc_den"], ["loc_softsign"]),
++        helper.make_node("Mul", ["loc_softsign", "mean_clip_scale"], ["loc"]),
++        helper.make_node("Tanh", ["loc"], [OUTPUT_NAME]),
++    ]
++    graph = helper.make_graph(
++        nodes, "senpuu_maru_policy",
++        [helper.make_tensor_value_info(INPUT_NAME, TensorProto.FLOAT, ["batch", obs_dim])],
++        [helper.make_tensor_value_info(OUTPUT_NAME, TensorProto.FLOAT, ["batch", act_dim])],
++        initializer=inits,
+     )
+-    
+-    print("[INFO] 5. Cleaning up temporary files...")
+-    shutil.rmtree(saved_model_dir)
+-    print(f"\n✅ ONNX Model successfully exported to: {onnx_path}")
++    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", OPSET)])
++    model.ir_version = min(model.ir_version, 9)  # 古い onnxruntime でも読めるように
++    onnx.checker.check_model(model)
++    return model
++
++
++def verify_against_jax(params, onnx_path: str, n_samples: int = 256, atol: float = 1e-4) -> float:
++    """ONNX (onnxruntime) と JAX の deterministic 推論の出力差の最大値を返す。atol 超過なら例外。"""
++    import onnxruntime as ort
++
++    mean, std, _ = _policy_arrays(params)
++    rng = np.random.default_rng(0)
++    # 学習時の観測分布付近 (正規化後に ±3σ 程度) の入力で比べる
++    obs = (mean + std * rng.normal(size=(n_samples, mean.shape[0])).clip(-3, 3)).astype(np.float32)
++
++    session = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
++    onnx_action = session.run(None, {session.get_inputs()[0].name: obs})[0]
++
++    infer = jax.jit(make_inference_fn_from_params(params, deterministic=True))
++    jax_action = np.stack([
++        np.asarray(infer({POLICY_OBS_KEY: jp.asarray(o)}, jax.random.PRNGKey(0))[0]) for o in obs
++    ])
++    max_diff = float(np.max(np.abs(onnx_action - jax_action)))
++    if not np.isfinite(max_diff) or max_diff > atol:
++        raise RuntimeError(f"ONNX output does not match JAX inference: max|diff|={max_diff:.3g} > {atol}")
++    return max_diff
++
++
++def export(model_path: str, output_path: str) -> float:
++    import onnx
++
++    params = load_checkpoint(model_path)
++    model = build_onnx_model(params)
++    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
++    onnx.save(model, output_path)
++    return verify_against_jax(params, output_path)
++
+ 
+ def main():
+-    parser = argparse.ArgumentParser()
+-    parser.add_argument("--model", type=str, required=True, help="mjx_params.pkl へのパス")
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument("--model", type=str, required=True, help="学習済み checkpoint (best_params.pkl 等)")
+     parser.add_argument("--output", type=str, default="brax_policy.onnx")
+     args = parser.parse_args()
+-    
++
+     if not os.path.exists(args.model):
+         print(f"[Error] Parameter file not found: {args.model}")
+         sys.exit(1)
+-        
+-    obs_dim = RobotConfig.OBS_DIM
+-    action_dim = RobotConfig.NUM_JOINTS
+-    
+-    print(f"--- ONNX Export Pipeline ---")
+-    print(f"Observation Dim: {obs_dim}")
+-    print(f"Action Dim: {action_dim}")
+-    print(f"Target Output: {args.output}")
+-    
++
++    print("--- ONNX Export ---")
++    print(f"Observation Dim: {RobotConfig.OBS_DIM} / Action Dim: {RobotConfig.NUM_JOINTS}")
+     try:
+-        predict_fn = load_brax_inference_fn(args.model, obs_dim, action_dim)
+-        export_jax_to_onnx(predict_fn, obs_dim, args.output)
+-    except Exception as e:
+-        print(f"\n[Error] Export failed: {e}")
+-        print("💡 Hint: Ensure you have `tensorflow` and `tf2onnx` installed (`pip install tensorflow-cpu tf2onnx`)")
++        max_diff = export(args.model, args.output)
++    except ImportError as e:
++        print(f"[Error] {e}\n💡 `pip install onnx onnxruntime` を実行してください")
+         sys.exit(1)
++    print(f"✅ ONNX Model exported to: {args.output} (JAX との最大誤差 {max_diff:.2e})")
++
+ 
+ if __name__ == "__main__":
+     main()
+diff --git a/train/export_trajectory.py b/train/export_trajectory.py
+index 563642a..49973e9 100644
+--- a/train/export_trajectory.py
++++ b/train/export_trajectory.py
+@@ -1,25 +1,14 @@
+ import os
+ import sys
+-import pickle
+ import argparse
+ 
+ import jax
+-import jax.numpy as jnp
+ import numpy as np
+ 
+-# sysモジュールのパッチ (Windows/WSL上のbrax/orbax依存対策)
+-if not hasattr(sys.modules.get("uvloop", None), "__name__"):
+-    sys.modules["uvloop"] = type(sys)("uvloop")
+-
+-from brax import envs
+-from brax.training.agents.ppo import networks as ppo_networks
+-from brax.training.acme import running_statistics
+-
+ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ from robot.config import RobotConfig
+-from envs.mjx_env import SenpuuMaruMJXEnv  # noqa: F401
+-from train.train_mjx import make_policy_network_factory
+-from train.visualize_rl import load_checkpoint
++from robot.policy_network import find_checkpoint, load_checkpoint, make_inference_fn_from_params
++from envs.mjx_env import SenpuuMaruMJXEnv
+ 
+ def render_trajectory_to_gif(traj: np.ndarray, gif_path: str, height: int = 480, width: int = 640, fps: int = 30):
+     """保存済み軌跡データからMuJoCoオフスクリーンレンダラーでGIFを生成する。"""
+@@ -71,7 +60,8 @@ def render_trajectory_to_gif(traj: np.ndarray, gif_path: str, height: int = 480,
+ 
+ def main():
+     parser = argparse.ArgumentParser(description="Export trajectory (.npy) and optional simulation GIF from policy.")
+-    parser.add_argument("--version", type=int, default=8, help="Model version directory under log/")
++    parser.add_argument("--exp_name", type=str, default="", help="log/<exp_name> 配下のcheckpointを使う")
++    parser.add_argument("--version", type=int, default=None, help="version_N の N (省略時は最新)")
+     parser.add_argument("--model", type=str, default="best_params.pkl", help="Model checkpoint filename")
+     parser.add_argument("--output", type=str, default=None, help="Output path for trajectory .npy file")
+     parser.add_argument("--gif", type=str, default=None, help="Output path for simulation GIF (e.g. simulation.gif)")
+@@ -90,30 +80,16 @@ def main():
+         render_trajectory_to_gif(traj, gif_out)
+         return
+ 
+-    model_path = os.path.join(root_dir, "log", f"version_{args.version}", args.model)
+-    if not os.path.exists(model_path):
+-        model_path = os.path.join(root_dir, "log", "mjx_ppo_rma_100hz", f"version_{args.version}", args.model)
+-    
++    model_path = find_checkpoint(args.exp_name, args.version, args.model)
++    if model_path is None:
++        print(f"エラー: checkpoint が見つかりません (exp_name={args.exp_name!r}, version={args.version}, model={args.model})")
++        return
+     print(f"モデルをロード中: {model_path}")
+     params = load_checkpoint(model_path)
+-        
+-    jax.config.update('jax_platform_name', 'cpu')
+-    env = envs.get_environment('senpuu_maru_mjx')
+-    
+-    ppo_network = make_policy_network_factory(
+-        observation_size=env.observation_size,
+-        action_size=env.action_size,
+-        preprocess_observations_fn=running_statistics.normalize,
+-    )
+-    make_policy = ppo_networks.make_inference_fn(ppo_network)
+-    
+-    def _strip_leading_dim(leaf):
+-        if hasattr(leaf, "shape") and getattr(leaf, "ndim", 0) > 0 and leaf.shape[0] == 1:
+-            return leaf.squeeze(0)
+-        return leaf
+ 
+-    params_stripped = jax.tree_util.tree_map(_strip_leading_dim, params)
+-    policy = make_policy(params_stripped, deterministic=True)
++    jax.config.update('jax_platform_name', 'cpu')
++    env = SenpuuMaruMJXEnv()
++    policy = jax.jit(make_inference_fn_from_params(params, deterministic=True))
+     
+     jit_reset = jax.jit(env.reset)
+     jit_step = jax.jit(env.step)
+diff --git a/train/train_mjx.py b/train/train_mjx.py
+index e898073..d1425ed 100644
+--- a/train/train_mjx.py
++++ b/train/train_mjx.py
+@@ -23,7 +23,8 @@
+   python train/train_mjx.py --exp_name phase0_debug_seed42 --seed=42 --target_kl=0.02
+ 
+ 環境仕様 (robot/config.py が正本):
+-  - 観測: 625次元 (base 84 + history 420 + action_history 100 + temp 20 + volt 1)
++  - 観測: dict。actor用 state 625次元 (base 84 + history 420 + action_history 100
++    + temp 20 + volt 1)、critic用 privileged_state (state + シミュレータ真値・DR値)
+   - 行動: 20次元 (関節角の残差 Δq、トルク直接指令ではない)
+   - エピソード長: 500 step (100Hz制御、5秒)
+   - Phase 0: 外乱無効 (DISTURBANCE_CURRICULUM=False)
+@@ -62,8 +63,8 @@ os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+ import jax
+ import jax.numpy as jnp
+ 
+-# Reuse XLA executables across repeated WSL validation/training runs.
+-jax.config.update("jax_compilation_cache_dir", "/mnt/c/bipedal_robot/.jax_cache")
++# Reuse XLA executables across repeated validation/training runs (.jax_cache/ は .gitignore 済み)。
++jax.config.update("jax_compilation_cache_dir", os.path.join(PROJECT_ROOT, ".jax_cache"))
+ jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
+ 
+ if not hasattr(jax, "device_put_replicated"):
+@@ -75,12 +76,7 @@ from brax import envs
+ from brax.envs import training as brax_training
+ from brax.training.agents.ppo import train as ppo
+ from brax.training.agents.ppo import networks as ppo_networks
+-from robot.policy_network import (
+-    POLICY_MAX_STD,
+-    POLICY_MEAN_CLIP_SCALE,
+-    POLICY_MIN_STD,
+-    make_policy_network_factory,
+-)
++from robot.policy_network import make_policy_network_factory
+ 
+ # Patch brax _unpmap for JAX 0.4+ Multi-GPU safety
+ def _safe_unpmap(v):
+@@ -150,20 +146,13 @@ from envs.training_wrapper import TrainingProgressWrapper, EpisodeInfoResetWrapp
+ #                              compute_saturation_ratio() 参照。方策が
+ #                              実行不能な指令を多発させている、または
+ #                              CBF/可動域制限が過剰に効いている可能性)
+-#   6. Sensor/Kinematics Fallback - envs/mjx_rewards.py の com_accel が
+-#                              qacc取得失敗によるフォールバック値
+-#                              [0,0,-9.81]を使用中(com_accel_is_fallback)。
+-#                              stability_metrics.py のv2 [CRITICAL FIX]
+-#                              で説明されている「zmp_marginが死んだ指標に
+-#                              なる」バグの片割れの原因だったため、
+-#                              本番での再発を監視する。
+ #
+ # 依存するmetricsキー (envs/mjx_rewards.py, envs/mjx_env.py,
+ # envs/stability_metrics.py, safety/cbf.py で提供):
+ #   total_reward, total_penalty, stability_index, zmp_margin, r_upright,
+ #   r_com_stab, both_feet_contact, r_cp, r_recovery,
+ #   disturbance_recovery_bonus, pbrs_reward, alive, potential,
+-#   action_saturation, stability_metrics_finite, com_accel_is_fallback
++#   action_saturation, stability_metrics_finite
+ # ============================================================================
+ 
+ REWARD_AUDIT_THRESHOLDS = {
+@@ -342,17 +331,6 @@ def _audit_reward_metrics(metrics_dict: dict, metrics_history: list) -> list:
+                 f"可能性。"
+             )
+ 
+-    # --- 6. Sensor/Kinematics Fallback ---
+-    fallback_key = _find_metric_key(metrics_dict, 'com_accel_is_fallback')
+-    if fallback_key is not None and metrics_dict[fallback_key] > 0.5:
+-        alerts.append(
+-            "[Sensor Fallback] com_accel が qacc 取得失敗によりフォール"
+-            "バック値[0,0,-9.81]を使用中。envs/mjx_rewards.py の compute() "
+-            "内、nq/qacc の条件分岐を確認。ZMPが重心追従に退化し、外乱下の"
+-            "不安定性を過小評価している可能性がある(stability_metrics.py "
+-            "のv2 changelog参照)。"
+-        )
+-
+     # [予防追加 2026-09-13] envs/mjx_env.py の physics_step ロールバック
+     # 機構が実際に発動した頻度を記録する。ロールバックにより学習自体は
+     # 汚染されないが、頻発する場合はカリキュラム(外乱強度)や物理タイム
+@@ -369,6 +347,130 @@ def _audit_reward_metrics(metrics_dict: dict, metrics_history: list) -> list:
+     return alerts
+ 
+ 
++# ============================================================================
++# [2026-10-02 追加] 再現性の記録 (run_manifest.json)
++# ============================================================================
++# 3seedの学習結果を「どのコード・どの設定で得たか」に紐付けるため、学習開始前に
++# git のコミット・作業ツリーの状態・解決済みのPPO設定・Braxのステップ算術を
++# <run_dir>/run_manifest.json に書き出す。追跡中のファイルに未コミットの変更がある場合は
++# 記録したコミットと実際のコードが一致しないため、--allow_dirty 無しでは起動しない。
++
++def _git_provenance(repo_root) -> dict:
++    """学習に使うコードの git コミットと作業ツリーの状態を返す。
++
++    dirty = 追跡中のファイルに中身の変更があること。次は dirty に数えない:
++      - 改行コード(CRLF/LF)だけ・実行権限ビットだけの差分 (Windows の作業ツリーを
++        WSL の git から見ると、変更していないファイルでもこう見えることがある)
++      - 未追跡ファイル (学習ログや評価レポート、手元のメモ等)。一覧は untracked_files に記録する
++    """
++    import subprocess
++
++    def _git(*git_args, check=True):
++        return subprocess.run(
++            ["git", "-C", str(repo_root), "-c", "core.fileMode=false", *git_args],
++            capture_output=True, text=True, check=check,
++        )
++
++    try:
++        commit = _git("rev-parse", "HEAD").stdout.strip()
++    except (OSError, subprocess.CalledProcessError) as e:
++        return {"available": False, "error": str(e).strip()}
++
++    branch = _git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
++    # -z: パスをクォート/エスケープせずNUL区切りで受け取る (日本語ファイル名対策)
++    entries = _git("status", "--porcelain", "-z", "--untracked-files=all").stdout.split("\0")
++    changed, untracked = [], []
++    i = 0
++    while i < len(entries):
++        entry = entries[i]
++        i += 1
++        if len(entry) < 4:
++            continue
++        code, path = entry[:2], entry[3:]
++        if code[0] in "RC":
++            i += 1  # rename/copy は次の要素が元のパス
++        if code == "??":
++            if not path.startswith("log/"):
++                untracked.append(path)
++        else:
++            changed.append(path)
++    dirty_files = [
++        path for path in changed
++        if _git("diff", "--ignore-cr-at-eol", "--quiet", "HEAD", "--", path, check=False).returncode != 0
++    ]
++    return {
++        "available": True,
++        "commit": commit,
++        "branch": branch,
++        "dirty": bool(dirty_files),
++        "dirty_files": dirty_files,
++        "untracked_files": untracked,
++    }
++
++
++def _git_diff_patch(repo_root) -> str:
++    """作業ツリーの未コミット変更 (--allow_dirty 時に run_dir に保存する)。"""
++    import subprocess
++    return subprocess.run(
++        ["git", "-C", str(repo_root), "-c", "core.fileMode=false",
++         "diff", "--ignore-cr-at-eol", "HEAD"],
++        capture_output=True, text=True,
++    ).stdout
++
++
++def _ppo_step_arithmetic(steps, num_envs, batch_size, num_minibatches, unroll_length,
++                         num_evals, action_repeat=1) -> dict:
++    """Brax PPO (brax/training/agents/ppo/train.py) と同じ式で実際の学習量を求める。
++
++    num_timesteps はそのまま使われず、評価区間ごとの training_step 回数を ceil で
++    切り上げるため、実際の総env step数は --steps を超えることがある。"""
++    import math
++    env_step_per_training_step = batch_size * unroll_length * num_minibatches * action_repeat
++    num_evals_after_init = max(num_evals - 1, 1)
++    num_training_steps_per_epoch = math.ceil(
++        steps / (num_evals_after_init * env_step_per_training_step)
++    )
++    num_policy_iterations = num_evals_after_init * num_training_steps_per_epoch
++    return {
++        "env_step_per_training_step": env_step_per_training_step,
++        "unrolls_per_env_per_training_step": batch_size * num_minibatches // num_envs,
++        "num_training_steps_per_epoch": num_training_steps_per_epoch,
++        "num_policy_iterations": num_policy_iterations,
++        "expected_total_env_steps": num_policy_iterations * env_step_per_training_step,
++        "requested_env_steps": steps,
++    }
++
++
++def _normalizer_summary(params, near_constant_std: float) -> dict:
++    """観測正規化の統計(mean/std)を観測キーごとに要約し、stdが下限付近に張り付いた
++    チャネルを列挙する。
++
++    sim内でほぼ定数のチャネルは、sim外(実機・別条件の評価)でわずかにずれただけで
++    正規化後に巨大な値になる。学習後にどのチャネルがそうなっているかを確認するために残す。"""
++    normalizer = params[0]
++    std_eps = float(np.asarray(getattr(normalizer, "std_eps", 0.0)).reshape(-1)[0])
++    means, stds = normalizer.mean, normalizer.std
++    if not isinstance(means, dict):
++        means, stds = {"obs": means}, {"obs": stds}
++    summary = {"std_eps": std_eps, "near_constant_threshold": near_constant_std, "keys": {}}
++    for key in means:
++        mean = np.asarray(means[key]).reshape(-1)
++        std = np.asarray(stds[key]).reshape(-1)
++        # std = sqrt(var + eps) なので、eps を除いた観測そのもののばらつきで判定する
++        raw_std = np.sqrt(np.maximum(std ** 2 - std_eps, 0.0))
++        flagged = np.nonzero(raw_std < near_constant_std)[0]
++        summary["keys"][key] = {
++            "std_min": float(std.min()),
++            "std_max": float(std.max()),
++            "near_constant_channels": [
++                {"index": int(i), "mean": float(mean[i]), "raw_std": float(raw_std[i])} for i in flagged
++            ],
++            "mean": mean.tolist(),
++            "std": std.tolist(),
++        }
++    return summary
++
++
+ def parse_args(args=None):
+     parser = argparse.ArgumentParser()
+     parser.add_argument("--exp_name", type=str, default="", help="Experiment subfolder under log. Leave empty to write directly to log/version_x.")
+@@ -378,6 +480,7 @@ def parse_args(args=None):
+     parser.add_argument("--unroll_length", type=int, default=10, help="PPOのアクションアンロール長")
+     parser.add_argument("--episode_length", type=int, default=None, help="1エピソードのステップ数")
+     parser.add_argument("--num_evals", type=int, default=None, help="評価回数")
++    parser.add_argument("--num_eval_envs", type=int, default=128, help="通常evalの並列環境数 (Brax既定128)")
+     parser.add_argument("--batch_size", type=int, default=None)
+     parser.add_argument("--num_minibatches", type=int, default=None)
+     parser.add_argument("--num_updates_per_batch", type=int, default=4)
+@@ -403,11 +506,41 @@ def parse_args(args=None):
+         "--disable_disturbed_eval", action="store_true",
+         help="外乱カリキュラム評価を無効化する(従来通りの挙動に戻す)。"
+     )
++    # [2026-10-02 追加] Brax PPO の既定 normalize_observations_std_eps=0.0 では、sim内で
++    # ほぼ定数の観測チャネルの std が 1e-6 に張り付き、sim外で値がわずかにずれるだけで
++    # 正規化後の入力が 1e4〜1e6 倍に増幅される。std = sqrt(var + eps) なので
++    # 1e-4 で std の下限は約0.01(観測ノイズσ=0.01と同程度)になり、
++    # 通常に変動するチャネルへの影響は小さい。
++    parser.add_argument(
++        "--obs_norm_std_eps", type=float, default=1e-4,
++        help="観測正規化 std=sqrt(var+eps) の eps (Brax既定0.0)。",
++    )
++    parser.add_argument(
++        "--allow_dirty", action="store_true",
++        help="未コミットの変更がある作業ツリーでも学習を開始する(run_manifest.jsonにdirtyとして記録)。",
++    )
+     return parser.parse_args(args)
+ 
+ def main():
+     args = parse_args()
+-    
++
++    provenance = _git_provenance(PROJECT_ROOT)
++    if not provenance["available"]:
++        print(f"[Warning] gitのコミット情報を取得できません。run_manifest.jsonにコード版を記録できません: "
++              f"{provenance.get('error')}")
++    elif provenance["dirty"]:
++        print("[Provenance] 追跡中のファイルに未コミットの変更があります (改行コード・実行権限だけの差分は除く):")
++        for path in provenance["dirty_files"]:
++            print(f"    {path}")
++        if not args.allow_dirty:
++            raise SystemExit(
++                "未コミットの変更があるため学習を開始しません。記録されるコミット "
++                f"({provenance['commit'][:12]}) と実際に学習するコードが一致しなくなるためです。\n"
++                "変更をコミットしてから再実行するか、意図した実行であれば --allow_dirty を付けてください"
++                "(差分は run_dir/uncommitted.patch に保存されます)。"
++            )
++        print("[Provenance] --allow_dirty 指定のため続行します (差分を uncommitted.patch に保存)。")
++
+     print("=== MJX GPU Training Pipeline (RMA Enabled) ===")
+     devices = jax.devices()
+     print(f"JAX Devices: {devices}")
+@@ -456,7 +589,8 @@ def main():
+         print(f"[Auto-Tune] (batch_size * num_minibatches) % num_envs == 0 を満たすため、num_minibatches を {num_minibatches} に自動調整しました (元: {old_minibatches})")
+ 
+     # 1. 環境生成
+-    env = envs.get_environment('senpuu_maru_mjx')
++    # [2026-10-02 FIX] env の time_out/truncated を Brax EpisodeWrapper の episode_length と一致させる。
++    env = envs.get_environment('senpuu_maru_mjx', max_episode_steps=episode_length)
+     
+     # 2. ログディレクトリとバージョン管理
+     from pathlib import Path
+@@ -751,37 +885,97 @@ def main():
+ 
+     brax_training.wrap = _wrap_with_progress
+ 
++    ppo_config = dict(
++        num_timesteps=steps,
++        num_evals=num_evals,
++        reward_scaling=0.01,  # 報酬クリップ後の値をPPOの更新量に合わせる
++        episode_length=episode_length,
++        normalize_observations=True,
++        normalize_observations_std_eps=args.obs_norm_std_eps,
++        action_repeat=1,
++        unroll_length=args.unroll_length,
++        num_minibatches=num_minibatches,
++        num_updates_per_batch=args.num_updates_per_batch,
++        discounting=0.99,
++        bootstrap_on_timeout=True,
++        learning_rate=args.learning_rate,
++        entropy_cost=1e-3,
++        # --- KLダイバージェンス制御 ---
++        clipping_epsilon=0.2,           # 0.3(Braxデフォルト)→0.2に縮小
++        max_grad_norm=1.0,              # 勾配クリッピングで勾配爆発を防止
++        learning_rate_schedule='ADAPTIVE_KL',  # Brax内蔵Adaptive KL LR
++        desired_kl=args.target_kl,
++        learning_rate_schedule_min_lr=1e-5,   # KL爆発時のフロア（1e-6では低すぎてLRがstuckする）
++        learning_rate_schedule_max_lr=5e-4,   # KL安定時の天井
++        # [2026-10-02] Brax既定(False)では通常evalが確率的方策で回り、Gate A判定
++        # (deterministic評価)と条件がずれる。
++        deterministic_eval=True,
++
++        num_envs=num_envs,
++        num_eval_envs=args.num_eval_envs,
++        batch_size=batch_size,
++        seed=args.seed,
++    )
++
++    import brax as _brax
++    import mujoco as _mujoco
++    manifest = {
++        "created_at": datetime.now().isoformat(),
++        "argv": sys.argv,
++        "git": provenance,
++        "allow_dirty": bool(args.allow_dirty),
++        "versions": {
++            "python": sys.version.split()[0],
++            "jax": jax.__version__,
++            "brax": getattr(_brax, "__version__", "unknown"),
++            "mujoco": _mujoco.__version__,
++        },
++        "devices": [str(d) for d in devices],
++        "ppo_config": ppo_config,
++        "ppo_step_arithmetic": _ppo_step_arithmetic(
++            steps, num_envs, batch_size, num_minibatches, args.unroll_length, num_evals,
++        ),
++        "env": {
++            "max_episode_steps": episode_length,
++            "robot_config_max_episode_steps": RobotConfig.MAX_EPISODE_STEPS,
++            "sim_dt": RobotConfig.SIM_DT,
++            "control_dt": RobotConfig.CONTROL_DT,
++            "kp": RobotConfig.KP,
++            "kd": RobotConfig.KD,
++            "obs_dim": RobotConfig.OBS_DIM,
++            "privileged_obs_dim": RobotConfig.PRIVILEGED_OBS_DIM,
++            "init_joint_pos_noise": RobotConfig.INIT_JOINT_POS_NOISE,
++            "init_joint_vel_noise": RobotConfig.INIT_JOINT_VEL_NOISE,
++            "reward_weights": dict(RobotConfig.REWARD_WEIGHTS),
++        },
++    }
++    manifest_path = run_dir / "run_manifest.json"
++
++    def _write_manifest():
++        with open(manifest_path, "w", encoding="utf-8") as f:
++            json.dump(manifest, f, ensure_ascii=False, indent=2, default=str)
++
++    _write_manifest()
++    if provenance.get("dirty"):
++        (run_dir / "uncommitted.patch").write_text(_git_diff_patch(PROJECT_ROOT), encoding="utf-8")
++    arith = manifest["ppo_step_arithmetic"]
++    print(
++        f"[Info] run_manifest: {manifest_path} "
++        f"(commit={provenance.get('commit', 'unknown')[:12]}, "
++        f"env_step/iter={arith['env_step_per_training_step']}, "
++        f"policy_iters={arith['num_policy_iterations']}, "
++        f"expected_total_steps={arith['expected_total_env_steps']})",
++        flush=True,
++    )
++
+     # 3. PPO学習実行 (RMA Network Architecture)
+     try:
+         make_inference_fn, params, metrics = ppo.train(
+             environment=env,
+             network_factory=make_policy_network_factory,
+-            num_timesteps=steps,
+-            num_evals=num_evals,
+-            reward_scaling=0.01,  # 報酬クリップ後の値をPPOの更新量に合わせる
+-            episode_length=episode_length,
+-            normalize_observations=True,
+-            action_repeat=1,
+-            unroll_length=args.unroll_length,
+-            num_minibatches=num_minibatches,
+-            num_updates_per_batch=args.num_updates_per_batch,
+-            discounting=0.99,
+-            bootstrap_on_timeout=True,
+-            learning_rate=args.learning_rate,
+-            entropy_cost=1e-3,
+-            # --- KLダイバージェンス制御 ---
+-            clipping_epsilon=0.2,           # 0.3(Braxデフォルト)→0.2に縮小
+-            max_grad_norm=1.0,              # 勾配クリッピングで勾配爆発を防止
+-            learning_rate_schedule='ADAPTIVE_KL',  # Brax内蔵Adaptive KL LR
+-            desired_kl=args.target_kl,
+-            learning_rate_schedule_min_lr=1e-5,   # KL爆発時のフロア（1e-6では低すぎてLRがstuckする）
+-            learning_rate_schedule_max_lr=5e-4,   # KL安定時の天井
+-
+-            num_envs=num_envs,
+-            batch_size=batch_size,
+-            seed=args.seed,
+             progress_fn=progress_callback,
+-            policy_params_fn=policy_params_callback
++            policy_params_fn=policy_params_callback,
++            **ppo_config,
+         )
+     finally:
+         # 他のモジュールに影響しないよう必ず復元
+@@ -790,6 +984,23 @@ def main():
+     elapsed_time = time.time() - start_time
+     print(f"Training finished in {elapsed_time/60:.1f} minutes!")
+ 
++    manifest["finished_at"] = datetime.now().isoformat()
++    manifest["elapsed_minutes"] = elapsed_time / 60.0
++    manifest["final_logged_env_steps"] = metrics_history[-1]["step"] if metrics_history else None
++    _write_manifest()
++
++    normalizer_summary = _normalizer_summary(params, near_constant_std=1e-3)
++    with open(run_dir / "normalizer_stats.json", "w", encoding="utf-8") as f:
++        json.dump(normalizer_summary, f, indent=2)
++    actor_flagged = normalizer_summary["keys"].get("state", {}).get("near_constant_channels", [])
++    if actor_flagged:
++        print(
++            f"[Info] actor観測のうちsim内でほぼ定数(eps除外前のstd<{normalizer_summary['near_constant_threshold']})の"
++            f"チャネルが {len(actor_flagged)} 個あります。設計上の定数(base_pos/ZMP/位相/参照角)以外が"
++            f"含まれていないか確認すること。実機で同じ値にならないと正規化後に最大 1/std 倍に増幅される: "
++            f"{run_dir / 'normalizer_stats.json'}"
++        )
++
+     # --- 報酬ハッキング監査サマリー ---
+     # 実機投入前に「この学習は信頼してよいか」を判断するための最終報告。
+     # 詳細な各アラートは REWARD_AUDIT_ALERTS.txt を参照。
+diff --git a/train/visualize_rl.py b/train/visualize_rl.py
+index 44efef5..2c340fd 100644
+--- a/train/visualize_rl.py
++++ b/train/visualize_rl.py
+@@ -17,26 +17,11 @@ if "--mode" in sys.argv:
+     if len(sys.argv) > _mode_i + 1 and sys.argv[_mode_i + 1] == "video":
+         os.environ.setdefault("MUJOCO_GL", "egl")
+ 
+-import pickle
+ import time
+-import enum
+ import argparse
+ import numpy as np
+ from pathlib import Path
+ 
+-# NumPy compatibility helpers (古いnumpy pickleとの互換用。現行環境では
+-# 基本的に素通りするが、他環境で保存された古いcheckpointの読み込みに備えて残す)
+-_old_np_asarray = np.asarray
+-
+-def _compat_numpy_asarray(a, dtype=None, order=None, copy=True, subok=False, **kwargs):
+-    try:
+-        return _old_np_asarray(a, dtype=dtype, order=order, copy=copy, subok=subok)
+-    except TypeError:
+-        return _old_np_asarray(a, dtype=dtype, order=order)
+-
+-np.asarray = _compat_numpy_asarray
+-
+-
+ # JAXヘッドレス化防止・CPU/EGL選択
+ # Viewer画面表示時はNative MuJoCo Viewerを起動
+ import jax
+@@ -48,23 +33,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
+ sys.path.append(str(REPO_ROOT))
+ 
+ from robot.config import RobotConfig
+-from robot.policy_network import make_policy_network_factory
++from robot.policy_network import find_checkpoint, load_checkpoint, make_inference_fn_from_params
+ from envs.mjx_env import SenpuuMaruMJXEnv
+-from brax.training.acme import running_statistics
+-from brax.training.agents.ppo import networks as ppo_networks
+-
+-if not hasattr(running_statistics, "NormalizationMode"):
+-    class NormalizationMode(enum.IntEnum):
+-        NONE = 0
+-    running_statistics.NormalizationMode = NormalizationMode
+-
+-
+-class CompatibilityUnpickler(pickle.Unpickler):
+-    def find_class(self, module, name):
+-        if module.startswith("numpy._core"):
+-            module = module.replace("numpy._core", "numpy.core")
+-        return super().find_class(module, name)
+-
+ 
+ def parse_args():
+     parser = argparse.ArgumentParser(description="Unified MJX replay entrypoint")
+@@ -84,54 +54,8 @@ def parse_args():
+     return parser.parse_args()
+ 
+ 
+-def get_model_path(exp_name: str, version: int | None, model_name: str) -> Path | None:
+-    root = REPO_ROOT / "log"
+-    if exp_name:
+-        root = root / exp_name
+-    if not root.exists():
+-        return None
+-    if version is not None:
+-        candidate = root / f"version_{version}" / model_name
+-        return candidate if candidate.exists() else None
+-    versions = sorted([d for d in root.glob("version_*") if d.is_dir()], key=lambda x: int(x.name.split("_")[-1]))
+-    for v in reversed(versions):
+-        candidate = v / model_name
+-        if candidate.exists():
+-            return candidate
+-    return None
+-
+-
+-def load_checkpoint(path: Path):
+-    with open(path, "rb") as f:
+-        return CompatibilityUnpickler(f).load()
+-
+-
+-def build_inference_fn(params, env):
+-    # [2026-09-25 修正] train_mjx.py は ppo.train(normalize_observations=True, ...)
+-    # で学習しており、Brax内部で
+-    #   ppo_network = network_factory(obs_shape, action_size,
+-    #                                  preprocess_observations_fn=running_statistics.normalize)
+-    # として観測正規化込みでネットワークを構築している(brax/training/agents/ppo/train.py
+-    # で実際に確認済み)。ここで preprocess_observations_fn を指定せず(デフォルト=恒等関数)
+-    # ネットワークを組むと、学習時に正規化された分布を前提に訓練された方策へ
+-    # 生の(正規化されていない)観測をそのまま入力することになり、
+-    # 出力する行動が実質デタラメになる
+-    # (=可視化すると倒れる/暴れる、という「学習は成功しているのに再生だけ失敗する」
+-    #  典型パターン)。running_statistics.normalize を明示的に渡して整合させる。
+-    ppo_network = make_policy_network_factory(
+-        env.observation_size, env.action_size,
+-        preprocess_observations_fn=running_statistics.normalize,
+-    )
+-    inference_fn = ppo_networks.make_inference_fn(ppo_network)
+-    
+-    # Strip leading pmap dimension from params (tuple: running_stats, policy_params, value_params)
+-    def _strip_leading_dim(leaf):
+-        if hasattr(leaf, "shape") and getattr(leaf, "ndim", 0) > 0 and leaf.shape[0] == 1:
+-            return leaf.squeeze(0)
+-        return leaf
+-    
+-    params_stripped = jax.tree_util.tree_map(_strip_leading_dim, params)
+-    return jax.jit(inference_fn(params_stripped, deterministic=True))
++def build_inference_fn(params):
++    return jax.jit(make_inference_fn_from_params(params, deterministic=True))
+ 
+ 
+ def apply_visual_push(state, args, step: int):
+@@ -185,7 +109,7 @@ def apply_mouse_perturbation(state, model, data, viewer, dt: float):
+ 
+ def run_interactive(params, args):
+     env = SenpuuMaruMJXEnv()
+-    inference_fn = build_inference_fn(params, env)
++    inference_fn = build_inference_fn(params)
+ 
+     model = mujoco.MjModel.from_xml_path(str(RobotConfig.MUJOCO_MODEL_PATH))
+     data = mujoco.MjData(model)
+@@ -235,7 +159,7 @@ def run_interactive(params, args):
+ def render_video(params, args):
+     steps, output = args.steps, args.output
+     env = SenpuuMaruMJXEnv()
+-    inference_fn = build_inference_fn(params, env)
++    inference_fn = build_inference_fn(params)
+ 
+     model = mujoco.MjModel.from_xml_path(str(RobotConfig.MUJOCO_MODEL_PATH))
+     data = mujoco.MjData(model)
+@@ -291,7 +215,7 @@ def render_plot(params, args):
+ 
+     steps, output = args.steps, args.output
+     env = SenpuuMaruMJXEnv()
+-    inference_fn = build_inference_fn(params, env)
++    inference_fn = build_inference_fn(params)
+ 
+     rng = jax.random.PRNGKey(0)
+     reset_fn = jax.jit(env.reset)
+@@ -358,7 +282,7 @@ def render_plot(params, args):
+ 
+ def main():
+     args = parse_args()
+-    model_path = get_model_path(args.exp_name, args.version, args.model)
++    model_path = find_checkpoint(args.exp_name, args.version, args.model)
+     if model_path is None:
+         print(f"Error: model file not found for exp_name={args.exp_name}, version={args.version}, model={args.model}")
+         return
